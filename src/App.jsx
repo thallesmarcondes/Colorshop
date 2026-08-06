@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   LayoutGrid, ArrowUpRight, ArrowDownLeft, Wallet, Users, Truck,
   RefreshCw, Plus, X, Trash2, Search, Download, Home, Loader2, Pencil, Receipt, Check, Copy,
-  Lock, UserCog, LogOut, FileText, Printer, MessageCircle, Eye, EyeOff
+  Lock, UserCog, LogOut, FileText, Printer, MessageCircle, Eye, EyeOff,
+  Menu, Image as ImageIcon, Camera
 } from "lucide-react";
 import { supabase } from "./supabaseConfig";
 
@@ -19,6 +20,36 @@ const fmtDateLong = () =>
   new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" }).toUpperCase();
 
 const uid = () => Math.random().toString(36).slice(2, 9);
+
+// Reads an image file, shrinks it and returns a compressed base64 (JPEG) string
+function readAndCompressImage(file, maxSize = 900, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Falha ao ler arquivo"));
+    reader.onload = () => {
+      const img = new window.Image();
+      img.onerror = () => reject(new Error("Falha ao carregar imagem"));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > maxSize) {
+          height = Math.round((height * maxSize) / width);
+          width = maxSize;
+        } else if (height > maxSize) {
+          width = Math.round((width * maxSize) / height);
+          height = maxSize;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 function todayISODefault(day) {
   const d = new Date();
   d.setDate(day);
@@ -80,9 +111,9 @@ async function saveKey(key, value) {
 
 const DEFAULTS = {
   estoque: [
-    { id: uid(), nome: "Smartphone Galaxy A54", qtd: 5, custo: 100, varejo: 150, atacado: 130, min: 3 },
-    { id: uid(), nome: "Fone Bluetooth JBL", qtd: 5, custo: 80, varejo: 120, atacado: 100, min: 4 },
-    { id: uid(), nome: "Carregador Turbo 20W", qtd: 8, custo: 72, varejo: 95, atacado: 80, min: 5 },
+    { id: uid(), nome: "Smartphone Galaxy A54", qtd: 5, custo: 100, custoVendedor: 100, varejo: 150, atacado: 130, min: 3 },
+    { id: uid(), nome: "Fone Bluetooth JBL", qtd: 5, custo: 80, custoVendedor: 80, varejo: 120, atacado: 100, min: 4 },
+    { id: uid(), nome: "Carregador Turbo 20W", qtd: 8, custo: 72, custoVendedor: 72, varejo: 95, atacado: 80, min: 5 },
   ],
   vendas: [],
   compras: [],
@@ -129,6 +160,31 @@ function Modal({ title, onClose, children, wide }) {
   );
 }
 
+function PhotoLightbox({ src, nome, onClose }) {
+  return (
+    <div className="fixed inset-0 bg-gray-900/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl max-w-lg w-full overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+          <h3 className="text-sm font-semibold text-gray-900 truncate">{nome}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 shrink-0 ml-2">
+            <X size={18} />
+          </button>
+        </div>
+        <img src={src} alt={nome} className="w-full max-h-[70vh] object-contain bg-gray-50" />
+        <div className="p-4">
+          <a
+            href={src}
+            download={`${(nome || "foto").replace(/[^a-z0-9]+/gi, "-")}.jpg`}
+            className="w-full flex items-center justify-center gap-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-md py-2 text-sm font-medium"
+          >
+            <Download size={14} /> Baixar foto
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Field({ label, children }) {
   return (
     <div className="mb-4">
@@ -143,6 +199,8 @@ const inputCls =
 
 export default function ColorShopDashboard() {
   const [page, setPage] = useState("visao");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [lightbox, setLightbox] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [saveError, setSaveError] = useState(false);
 
@@ -188,11 +246,16 @@ export default function ColorShopDashboard() {
         loadKey(STORAGE_KEYS.usuarios, DEFAULTS.usuarios),
         loadKey(STORAGE_KEYS.orcamentos, DEFAULTS.orcamentos),
       ]);
-      const estMigrado = (est || []).map((i) =>
-        i.varejo === undefined || i.atacado === undefined
-          ? { ...i, varejo: i.varejo ?? i.venda ?? i.custo * 1.3, atacado: i.atacado ?? i.venda ?? i.custo * 1.15 }
-          : i
-      );
+      const estMigrado = (est || []).map((i) => {
+        let x = i;
+        if (x.varejo === undefined || x.atacado === undefined) {
+          x = { ...x, varejo: x.varejo ?? x.venda ?? x.custo * 1.3, atacado: x.atacado ?? x.venda ?? x.custo * 1.15 };
+        }
+        if (x.custoVendedor === undefined) {
+          x = { ...x, custoVendedor: x.custo };
+        }
+        return x;
+      });
       setEstoque(estMigrado);
       const venMigrado = (ven || []).map((v) =>
         v.itens ? v : { ...v, itens: [{ itemId: v.itemId || uid(), itemNome: v.itemNome, qtd: v.qtd, tipoVenda: v.tipoVenda, precoUnit: v.qtd ? v.valor / v.qtd : v.valor, subtotal: v.valor }] }
@@ -331,7 +394,7 @@ export default function ColorShopDashboard() {
       if (existing) {
         estoqueAtualizado = estoqueAtualizado.map((i) => (i.id === existing.id ? { ...i, qtd: i.qtd + l.qtd, custo: l.custo } : i));
       } else {
-        estoqueAtualizado = [...estoqueAtualizado, { id: uid(), nome: l.nome, qtd: l.qtd, custo: l.custo, varejo: l.varejo || l.custo * 1.3, atacado: l.atacado || l.custo * 1.15, min: 3 }];
+        estoqueAtualizado = [...estoqueAtualizado, { id: uid(), nome: l.nome, qtd: l.qtd, custo: l.custo, custoVendedor: l.custo, varejo: l.varejo || l.custo * 1.3, atacado: l.atacado || l.custo * 1.15, min: 3 }];
       }
     });
     setEstoque(estoqueAtualizado);
@@ -552,8 +615,8 @@ export default function ColorShopDashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
           <StatCard label="VENDAS HOJE" value={fmtUSD(vendasHoje)} sub="Dados salvos" />
           <StatCard label="A RECEBER" value={fmtUSD(aReceber)} sub="Vendas pendentes" />
-          <StatCard label="CONTAS A PAGAR" value={fmtUSD(totalContasPendentes)} sub={`${contasPendentes.length} pendentes`} />
-          <StatCard label="VALOR EM ESTOQUE" value={fmtUSD(valorEstoque)} sub={`${unidadesEstoque} unidades`} />
+          {isAdmin && <StatCard label="CONTAS A PAGAR" value={fmtUSD(totalContasPendentes)} sub={`${contasPendentes.length} pendentes`} />}
+          {isAdmin && <StatCard label="VALOR EM ESTOQUE" value={fmtUSD(valorEstoque)} sub={`${unidadesEstoque} unidades`} />}
           <StatCard label="CLIENTES" value={clientes.length} sub={`${fornecedores.length} fornecedores`} />
         </div>
 
@@ -683,51 +746,117 @@ export default function ColorShopDashboard() {
   }
 
   function EstoquePage() {
+    const [busca, setBusca] = useState("");
+    const [filtroMarca, setFiltroMarca] = useState("");
+    const [filtroTipo, setFiltroTipo] = useState("");
+
+    const marcas = useMemo(
+      () => Array.from(new Set(estoque.map((i) => i.marca).filter(Boolean))).sort(),
+      [estoque]
+    );
+    const tipos = useMemo(
+      () => Array.from(new Set(estoque.map((i) => i.tipo).filter(Boolean))).sort(),
+      [estoque]
+    );
+
+    const listaFiltrada = estoque.filter((i) => {
+      const buscaOk = busca.trim() === "" || i.nome.toLowerCase().includes(busca.trim().toLowerCase());
+      const marcaOk = filtroMarca === "" || i.marca === filtroMarca;
+      const tipoOk = filtroTipo === "" || i.tipo === filtroTipo;
+      return buscaOk && marcaOk && tipoOk;
+    });
+
     return (
       <TableShell
         title="Estoque"
-        sub={`${estoque.length} mercadorias · ${unidadesEstoque} unidades`}
+        sub={`${listaFiltrada.length} de ${estoque.length} mercadorias · ${unidadesEstoque} unidades`}
         action={
-          <button onClick={() => { setEditingItem(null); setModal("item"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
-            <Plus size={14} /> Novo item
-          </button>
+          isAdmin && (
+            <button onClick={() => { setEditingItem(null); setModal("item"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
+              <Plus size={14} /> Novo item
+            </button>
+          )
         }
       >
+        <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-gray-100 bg-gray-50/50">
+          <div className="relative flex-1 min-w-[160px]">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              placeholder="Buscar por nome..."
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-700"
+            />
+          </div>
+          <select value={filtroMarca} onChange={(e) => setFiltroMarca(e.target.value)} className="text-sm border border-gray-200 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-700 text-gray-700">
+            <option value="">Todas as marcas</option>
+            {marcas.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <select value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)} className="text-sm border border-gray-200 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-700 text-gray-700">
+            <option value="">Todos os tipos</option>
+            {tipos.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+          {(busca || filtroMarca || filtroTipo) && (
+            <button onClick={() => { setBusca(""); setFiltroMarca(""); setFiltroTipo(""); }} className="text-xs text-gray-400 hover:text-gray-600 underline">
+              Limpar filtros
+            </button>
+          )}
+        </div>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-[11px] tracking-wide text-gray-400 border-b border-gray-100">
+              <th className="px-5 py-2 font-medium">FOTO</th>
               <th className="px-5 py-2 font-medium">MERCADORIA</th>
+              <th className="px-5 py-2 font-medium">MARCA</th>
+              <th className="px-5 py-2 font-medium">TIPO</th>
               <th className="px-5 py-2 font-medium">QTD</th>
-              <th className="px-5 py-2 font-medium">CUSTO UNIT.</th>
+              <th className="px-5 py-2 font-medium">CUSTO {isAdmin ? "(REAL)" : ""}</th>
               <th className="px-5 py-2 font-medium">VAREJO</th>
               <th className="px-5 py-2 font-medium">ATACADO</th>
-              <th className="px-5 py-2 font-medium">VALOR TOTAL</th>
-              <th className="px-5 py-2 font-medium">AÇÕES</th>
+              {isAdmin && <th className="px-5 py-2 font-medium">VALOR TOTAL</th>}
+              {isAdmin && <th className="px-5 py-2 font-medium">AÇÕES</th>}
             </tr>
           </thead>
           <tbody>
-            {estoque.map((i) => (
+            {listaFiltrada.map((i) => (
               <tr key={i.id} className="border-b border-gray-50">
+                <td className="px-5 py-3">
+                  {i.foto ? (
+                    <button onClick={() => setLightbox({ src: i.foto, nome: i.nome })} className="block w-10 h-10 rounded-md overflow-hidden border border-gray-200">
+                      <img src={i.foto} alt={i.nome} className="w-full h-full object-cover" />
+                    </button>
+                  ) : (
+                    <div className="w-10 h-10 rounded-md border border-gray-100 bg-gray-50 flex items-center justify-center">
+                      <ImageIcon size={14} className="text-gray-300" />
+                    </div>
+                  )}
+                </td>
                 <td className="px-5 py-3 font-medium text-gray-900">{i.nome}</td>
+                <td className="px-5 py-3 text-gray-600">{i.marca || "—"}</td>
+                <td className="px-5 py-3 text-gray-600">{i.tipo || "—"}</td>
                 <td className={`px-5 py-3 ${i.qtd < i.min ? "text-amber-600 font-medium" : "text-gray-600"}`}>{i.qtd}</td>
-                <td className="px-5 py-3 text-gray-600">{fmtUSD(i.custo)}</td>
+                <td className="px-5 py-3 text-gray-600">{fmtUSD(isAdmin ? i.custo : i.custoVendedor)}</td>
                 <td className="px-5 py-3 text-gray-600">{fmtUSD(i.varejo)}</td>
                 <td className="px-5 py-3 text-gray-600">{fmtUSD(i.atacado)}</td>
-                <td className="px-5 py-3 text-gray-900 font-medium">{fmtUSD(i.qtd * i.custo)}</td>
-                <td className="px-5 py-3">
-                  <div className="flex items-center gap-3">
-                    <button onClick={() => { setEditingItem(i); setModal("item"); }} className="text-gray-400 hover:text-emerald-700">
-                      <Pencil size={15} />
-                    </button>
-                    <button onClick={() => setEstoque((e) => e.filter((x) => x.id !== i.id))} className="text-gray-400 hover:text-red-600">
-                      <Trash2 size={15} />
-                    </button>
-                  </div>
-                </td>
+                {isAdmin && <td className="px-5 py-3 text-gray-900 font-medium">{fmtUSD(i.qtd * i.custo)}</td>}
+                {isAdmin && (
+                  <td className="px-5 py-3">
+                    <div className="flex items-center gap-3">
+                      <button onClick={() => { setEditingItem(i); setModal("item"); }} className="text-gray-400 hover:text-emerald-700">
+                        <Pencil size={15} />
+                      </button>
+                      <button onClick={() => setEstoque((e) => e.filter((x) => x.id !== i.id))} className="text-gray-400 hover:text-red-600">
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </td>
+                )}
               </tr>
             ))}
-            {estoque.length === 0 && (
-              <tr><td colSpan={6} className="py-8 text-center text-gray-400 text-sm">Nenhum item cadastrado.</td></tr>
+            {listaFiltrada.length === 0 && (
+              <tr><td colSpan={isAdmin ? 10 : 8} className="py-8 text-center text-gray-400 text-sm">
+                {estoque.length === 0 ? "Nenhum item cadastrado." : "Nenhum item encontrado com esses filtros."}
+              </td></tr>
             )}
           </tbody>
         </table>
@@ -1578,20 +1707,40 @@ export default function ColorShopDashboard() {
   function ItemModal() {
     const isEdit = !!editingItem;
     const [nome, setNome] = useState(editingItem?.nome || "");
+    const [marca, setMarca] = useState(editingItem?.marca || "");
+    const [tipo, setTipo] = useState(editingItem?.tipo || "");
     const [qtd, setQtd] = useState(editingItem?.qtd ?? 1);
     const [custo, setCusto] = useState(editingItem?.custo ?? 0);
+    const [custoVendedor, setCustoVendedor] = useState(editingItem?.custoVendedor ?? editingItem?.custo ?? 0);
     const [varejo, setVarejo] = useState(editingItem?.varejo ?? 0);
     const [atacado, setAtacado] = useState(editingItem?.atacado ?? 0);
     const [min, setMin] = useState(editingItem?.min ?? 3);
+    const [foto, setFoto] = useState(editingItem?.foto || null);
+    const [fotoLoading, setFotoLoading] = useState(false);
 
     function close() { setModal(null); setEditingItem(null); }
+
+    async function onFotoChange(e) {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setFotoLoading(true);
+      try {
+        const dataUrl = await readAndCompressImage(file);
+        setFoto(dataUrl);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setFotoLoading(false);
+        e.target.value = "";
+      }
+    }
 
     function save() {
       if (!nome) return;
       if (isEdit) {
-        setEstoque((e) => e.map((x) => (x.id === editingItem.id ? { ...x, nome, qtd, custo, varejo, atacado, min } : x)));
+        setEstoque((e) => e.map((x) => (x.id === editingItem.id ? { ...x, nome, marca, tipo, qtd, custo, custoVendedor, varejo, atacado, min, foto } : x)));
       } else {
-        setEstoque((e) => [...e, { id: uid(), nome, qtd, custo, varejo, atacado, min }]);
+        setEstoque((e) => [...e, { id: uid(), nome, marca, tipo, qtd, custo, custoVendedor, varejo, atacado, min, foto }]);
       }
       close();
     }
@@ -1600,12 +1749,57 @@ export default function ColorShopDashboard() {
 
     return (
       <Modal title={isEdit ? "Editar item de estoque" : "Novo item de estoque"} onClose={close}>
+        <Field label="Foto do produto">
+          <div className="flex items-center gap-3">
+            <div className="w-16 h-16 rounded-md border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden shrink-0">
+              {foto ? (
+                <img src={foto} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <ImageIcon size={20} className="text-gray-300" />
+              )}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-center gap-1.5 text-sm font-medium border border-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-50 cursor-pointer w-fit">
+                <Camera size={14} />
+                {fotoLoading ? "Carregando..." : foto ? "Trocar foto" : "Adicionar foto"}
+                <input type="file" accept="image/*" className="hidden" onChange={onFotoChange} disabled={fotoLoading} />
+              </label>
+              {foto && (
+                <button onClick={() => setFoto(null)} className="text-xs text-red-600 hover:underline w-fit">
+                  Remover foto
+                </button>
+              )}
+            </div>
+          </div>
+        </Field>
         <Field label="Nome"><input className={inputCls} value={nome} onChange={(e) => setNome(e.target.value)} /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Marca">
+            <input list="lista-marcas" className={inputCls} value={marca} onChange={(e) => setMarca(e.target.value)} placeholder="Ex: EMS, Neo Química..." />
+            <datalist id="lista-marcas">
+              {Array.from(new Set(estoque.map((i) => i.marca).filter(Boolean))).map((m) => <option key={m} value={m} />)}
+            </datalist>
+          </Field>
+          <Field label="Tipo">
+            <input list="lista-tipos" className={inputCls} value={tipo} onChange={(e) => setTipo(e.target.value)} placeholder="Ex: Comprimido, Xarope..." />
+            <datalist id="lista-tipos">
+              {Array.from(new Set(estoque.map((i) => i.tipo).filter(Boolean))).map((t) => <option key={t} value={t} />)}
+            </datalist>
+          </Field>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Quantidade"><input type="number" min="0" className={inputCls} value={qtd} onChange={(e) => setQtd(Number(e.target.value))} /></Field>
           <Field label="Estoque mínimo"><input type="number" min="0" className={inputCls} value={min} onChange={(e) => setMin(Number(e.target.value))} /></Field>
         </div>
-        <Field label="Custo unit. (US$)"><input type="number" step="0.01" className={inputCls} value={custo} onChange={(e) => setCusto(Number(e.target.value))} /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Custo real (US$)">
+            <input type="number" step="0.01" className={inputCls} value={custo} onChange={(e) => setCusto(Number(e.target.value))} />
+          </Field>
+          <Field label="Custo p/ vendedores (US$)">
+            <input type="number" step="0.01" className={inputCls} value={custoVendedor} onChange={(e) => setCustoVendedor(Number(e.target.value))} />
+          </Field>
+        </div>
+        <div className="text-xs text-gray-400 -mt-2 mb-4">O custo real só aparece pra administradores. Vendedores só veem o custo que você definir ao lado.</div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Preço varejo (US$) *"><input type="number" step="0.01" min="0.01" className={inputCls} value={varejo} onChange={(e) => setVarejo(Number(e.target.value))} /></Field>
           <Field label="Preço atacado (US$) *"><input type="number" step="0.01" min="0.01" className={inputCls} value={atacado} onChange={(e) => setAtacado(Number(e.target.value))} /></Field>
@@ -1929,10 +2123,46 @@ export default function ColorShopDashboard() {
   const currentNavEntry = NAV.find((n) => n.key === page);
   const effectivePage = currentNavEntry && currentNavEntry.roles.includes(authUser.papel) ? page : "visao";
 
+  const navList = (
+    <>
+      {visibleNav.map((n) => {
+        const Icon = n.icon;
+        const active = effectivePage === n.key;
+        return (
+          <button
+            key={n.key}
+            onClick={() => { setPage(n.key); setMobileNavOpen(false); }}
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+              active ? "bg-emerald-50 text-emerald-800" : "text-gray-600 hover:bg-gray-50"
+            }`}
+          >
+            <Icon size={16} />
+            {n.label}
+          </button>
+        );
+      })}
+    </>
+  );
+
+  const userFooter = (
+    <div className="px-3 py-4 border-t border-gray-100 flex items-center gap-2.5">
+      <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center text-xs font-semibold shrink-0">
+        {authUser.nome.slice(0, 2).toUpperCase()}
+      </div>
+      <div className="min-w-0">
+        <div className="text-xs font-semibold leading-tight truncate">{authUser.nome}</div>
+        <div className="text-[11px] text-gray-400 leading-tight">{authUser.papel === "admin" ? "Administrador" : "Vendedor"}</div>
+      </div>
+      <button onClick={logout} className="ml-auto text-gray-400 hover:text-red-600" title="Sair">
+        <LogOut size={15} />
+      </button>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-gray-50 flex text-gray-900" style={{ fontFamily: "Inter, system-ui, sans-serif" }}>
-      {/* Sidebar */}
-      <aside className="w-56 bg-white border-r border-gray-200 flex flex-col shrink-0">
+      {/* Sidebar - desktop */}
+      <aside className="hidden md:flex w-56 bg-white border-r border-gray-200 flex-col shrink-0">
         <div className="flex items-center gap-2.5 px-5 py-5">
           <div className="w-8 h-8 rounded-lg bg-emerald-800 text-white flex items-center justify-center font-bold text-sm">C</div>
           <div>
@@ -1940,55 +2170,58 @@ export default function ColorShopDashboard() {
             <div className="text-[11px] text-gray-400 leading-tight">Gestão comercial</div>
           </div>
         </div>
-        <nav className="flex-1 px-3 space-y-0.5">
-          {visibleNav.map((n) => {
-            const Icon = n.icon;
-            const active = effectivePage === n.key;
-            return (
-              <button
-                key={n.key}
-                onClick={() => setPage(n.key)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                  active ? "bg-emerald-50 text-emerald-800" : "text-gray-600 hover:bg-gray-50"
-                }`}
-              >
-                <Icon size={16} />
-                {n.label}
-              </button>
-            );
-          })}
-        </nav>
-        <div className="px-3 py-4 border-t border-gray-100 flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center text-xs font-semibold">
-            {authUser.nome.slice(0, 2).toUpperCase()}
-          </div>
-          <div className="min-w-0">
-            <div className="text-xs font-semibold leading-tight truncate">{authUser.nome}</div>
-            <div className="text-[11px] text-gray-400 leading-tight">{authUser.papel === "admin" ? "Administrador" : "Vendedor"}</div>
-          </div>
-          <button onClick={logout} className="ml-auto text-gray-400 hover:text-red-600" title="Sair">
-            <LogOut size={15} />
-          </button>
-        </div>
+        <nav className="flex-1 px-3 space-y-0.5">{navList}</nav>
+        {userFooter}
       </aside>
+
+      {/* Sidebar - mobile drawer */}
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div className="absolute inset-0 bg-gray-900/40" onClick={() => setMobileNavOpen(false)} />
+          <aside className="absolute left-0 top-0 bottom-0 w-64 bg-white flex flex-col shadow-xl">
+            <div className="flex items-center gap-2.5 px-5 py-5">
+              <div className="w-8 h-8 rounded-lg bg-emerald-800 text-white flex items-center justify-center font-bold text-sm">C</div>
+              <div>
+                <div className="text-sm font-semibold leading-tight">ColorShop</div>
+                <div className="text-[11px] text-gray-400 leading-tight">Gestão comercial</div>
+              </div>
+              <button onClick={() => setMobileNavOpen(false)} className="ml-auto text-gray-400 hover:text-gray-600">
+                <X size={18} />
+              </button>
+            </div>
+            <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto">{navList}</nav>
+            {userFooter}
+          </aside>
+        </div>
+      )}
 
       {/* Main */}
       <main className="flex-1 min-w-0">
         <div className="h-1 bg-gray-900" />
-        <div className="px-8 py-6">
-          <div className="flex items-start justify-between mb-6 flex-wrap gap-3">
+
+        {/* Mobile top bar */}
+        <div className="md:hidden flex items-center gap-3 px-4 py-3 bg-white border-b border-gray-200">
+          <button onClick={() => setMobileNavOpen(true)} className="text-gray-600">
+            <Menu size={22} />
+          </button>
+          <div className="w-7 h-7 rounded-lg bg-emerald-800 text-white flex items-center justify-center font-bold text-xs">C</div>
+          <div className="text-sm font-semibold">ColorShop</div>
+        </div>
+
+        <div className="px-4 md:px-8 py-4 md:py-6">
+          <div className="flex items-start justify-between mb-5 md:mb-6 flex-wrap gap-3">
             <div>
               <div className="text-[11px] tracking-wide text-gray-400 font-medium">{fmtDateLong()}</div>
-              <h1 className="text-2xl font-semibold text-gray-900 mt-0.5">{NAV.find((n) => n.key === effectivePage)?.label}</h1>
+              <h1 className="text-xl md:text-2xl font-semibold text-gray-900 mt-0.5">{NAV.find((n) => n.key === effectivePage)?.label}</h1>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="relative">
+            <div className="flex items-center gap-2 md:gap-3 flex-wrap w-full sm:w-auto">
+              <div className="relative hidden sm:block">
                 <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input placeholder="Buscar mercadoria..." className="pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-md w-56 focus:outline-none focus:ring-2 focus:ring-emerald-700" />
               </div>
               {isAdmin && (
                 <button onClick={backup} className="flex items-center gap-1.5 text-sm font-medium border border-gray-200 rounded-md px-3 py-2 hover:bg-gray-50">
-                  <Download size={14} /> Backup
+                  <Download size={14} /> <span className="hidden sm:inline">Backup</span>
                 </button>
               )}
               <button onClick={() => setModal("venda")} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-2">
@@ -2013,6 +2246,7 @@ export default function ColorShopDashboard() {
       {modal === "receberVenda" && <ReceberVendaModal />}
       {modal === "orcamento" && <OrcamentoModal />}
       {modal === "vendedor" && <VendedorModal />}
+      {lightbox && <PhotoLightbox src={lightbox.src} nome={lightbox.nome} onClose={() => setLightbox(null)} />}
     </div>
   );
 }
