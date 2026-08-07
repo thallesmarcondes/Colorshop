@@ -406,9 +406,13 @@ export default function ColorShopDashboard() {
     itens.forEach((l) => {
       const existing = estoqueAtualizado.find((i) => i.nome.toLowerCase() === l.nome.toLowerCase());
       if (existing) {
-        estoqueAtualizado = estoqueAtualizado.map((i) => (i.id === existing.id ? { ...i, qtd: i.qtd + l.qtd, custo: l.custo } : i));
+        estoqueAtualizado = estoqueAtualizado.map((i) =>
+          i.id === existing.id
+            ? { ...i, qtd: i.qtd + l.qtd, custo: l.custo, custoVendedor: l.custoVendedor ?? i.custoVendedor, marca: l.marca || i.marca, tipo: l.tipo || i.tipo }
+            : i
+        );
       } else {
-        estoqueAtualizado = [...estoqueAtualizado, { id: uid(), nome: l.nome, qtd: l.qtd, custo: l.custo, custoVendedor: l.custo, varejo: l.varejo || l.custo * 1.3, atacado: l.atacado || l.custo * 1.15, min: 3 }];
+        estoqueAtualizado = [...estoqueAtualizado, { id: uid(), nome: l.nome, marca: l.marca || "", tipo: l.tipo || "", qtd: l.qtd, custo: l.custo, custoVendedor: l.custoVendedor ?? l.custo, varejo: l.varejo || l.custo * 1.3, atacado: l.atacado || l.custo * 1.15, min: 3 }];
       }
     });
     setEstoque(estoqueAtualizado);
@@ -1928,8 +1932,11 @@ export default function ColorShopDashboard() {
   function CompraModal() {
     const [fornecedorId, setFornecedorId] = useState(fornecedores[0]?.id || "");
     const [nome, setNome] = useState("");
+    const [marca, setMarca] = useState("");
+    const [tipo, setTipo] = useState("");
     const [qtd, setQtd] = useState(1);
     const [custo, setCusto] = useState(0);
+    const [custoVendedor, setCustoVendedor] = useState(0);
     const [varejo, setVarejo] = useState(0);
     const [atacado, setAtacado] = useState(0);
     const [pagamento, setPagamento] = useState("PIX");
@@ -1939,13 +1946,26 @@ export default function ColorShopDashboard() {
 
     const nomeTrim = nome.trim();
     const isNovoProduto = nomeTrim !== "" && !estoque.some((i) => i.nome.toLowerCase() === nomeTrim.toLowerCase());
-    const podeAdicionar = nomeTrim !== "" && qtd > 0 && custo > 0 && (!isNovoProduto || (varejo > 0 && atacado > 0));
+    const podeAdicionar = nomeTrim !== "" && qtd > 0 && custo > 0 && custoVendedor > 0 && (!isNovoProduto || (varejo > 0 && atacado > 0));
     const total = carrinho.reduce((s, l) => s + l.custo * l.qtd, 0);
+
+    useEffect(() => {
+      const match = estoque.find((i) => i.nome.toLowerCase() === nomeTrim.toLowerCase());
+      if (match) {
+        setCusto(match.custo);
+        setCustoVendedor(match.custoVendedor ?? match.custo);
+        setVarejo(match.varejo);
+        setAtacado(match.atacado);
+        setMarca(match.marca || "");
+        setTipo(match.tipo || "");
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [nomeTrim]);
 
     function addAoCarrinho() {
       if (!podeAdicionar) return;
-      setCarrinho((c) => [...c, { key: uid(), nome: nomeTrim, qtd, custo, varejo, atacado }]);
-      setNome(""); setQtd(1); setCusto(0); setVarejo(0); setAtacado(0);
+      setCarrinho((c) => [...c, { key: uid(), nome: nomeTrim, marca, tipo, qtd, custo, custoVendedor, varejo, atacado }]);
+      setNome(""); setMarca(""); setTipo(""); setQtd(1); setCusto(0); setCustoVendedor(0); setVarejo(0); setAtacado(0);
     }
     function removerDoCarrinho(key) {
       setCarrinho((c) => c.filter((l) => l.key !== key));
@@ -1967,16 +1987,37 @@ export default function ColorShopDashboard() {
         <div className="border border-gray-200 rounded-lg p-4 mb-4 bg-gray-50">
           <div className="text-xs font-medium text-gray-500 mb-3">Adicionar produto à nota</div>
           <Field label="Mercadoria">
-            <input className={inputCls} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome do item (novo ou existente)" />
+            <input list="lista-produtos-compra" className={inputCls} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome do item (novo ou existente)" />
+            <datalist id="lista-produtos-compra">
+              {estoque.map((i) => <option key={i.id} value={i.nome} />)}
+            </datalist>
           </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Marca">
+              <input list="lista-marcas-compra" className={inputCls} value={marca} onChange={(e) => setMarca(e.target.value)} placeholder="Ex: EMS, Neo Química..." />
+              <datalist id="lista-marcas-compra">
+                {Array.from(new Set(estoque.map((i) => i.marca).filter(Boolean))).map((m) => <option key={m} value={m} />)}
+              </datalist>
+            </Field>
+            <Field label="Tipo">
+              <input list="lista-tipos-compra" className={inputCls} value={tipo} onChange={(e) => setTipo(e.target.value)} placeholder="Ex: Comprimido, Xarope..." />
+              <datalist id="lista-tipos-compra">
+                {Array.from(new Set(estoque.map((i) => i.tipo).filter(Boolean))).map((t) => <option key={t} value={t} />)}
+              </datalist>
+            </Field>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Quantidade">
               <input type="number" min="1" className={inputCls} value={qtd} onChange={(e) => setQtd(Number(e.target.value))} />
             </Field>
-            <Field label="Custo unit. (US$)">
+            <Field label="Custo real (US$)">
               <input type="number" step="0.01" className={inputCls} value={custo} onChange={(e) => setCusto(Number(e.target.value))} />
             </Field>
           </div>
+          <Field label="Custo p/ vendedores (US$)">
+            <input type="number" step="0.01" className={inputCls} value={custoVendedor} onChange={(e) => setCustoVendedor(Number(e.target.value))} />
+          </Field>
+          <div className="text-xs text-gray-400 -mt-2 mb-3">O custo real só aparece pra administradores. Vendedores só veem o custo que você definir aqui.</div>
           {isNovoProduto && (
             <>
               <div className="grid grid-cols-2 gap-3">
@@ -2009,8 +2050,8 @@ export default function ColorShopDashboard() {
               {carrinho.map((l) => (
                 <div key={l.key} className="flex items-center justify-between px-3 py-2 text-sm">
                   <div>
-                    <div className="font-medium text-gray-900">{l.nome} × {l.qtd}</div>
-                    <div className="text-xs text-gray-400">Custo {fmtUSD(l.custo)} un.</div>
+                    <div className="font-medium text-gray-900">{l.nome}{l.marca ? ` — ${l.marca}` : ""} × {l.qtd}</div>
+                    <div className="text-xs text-gray-400">Custo real {fmtUSD(l.custo)} un. · Custo vendedor {fmtUSD(l.custoVendedor)} un.</div>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="font-medium text-gray-900">{fmtUSD(l.custo * l.qtd)}</span>
