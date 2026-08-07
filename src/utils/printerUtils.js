@@ -26,19 +26,30 @@ export async function listPrinters() {
   return printers;
 }
 
-// Versão simplificada para teste: manda só texto puro, sem comandos ESC/POS.
+// Imprime como HTML renderizado (modo "pixel"), em vez de texto bruto.
 export async function printReceipt(printerName, lines) {
   await connect();
 
-  const config = qz.configs.create(printerName);
+  const config = qz.configs.create(printerName, {
+    size: { width: 80, height: null },
+    units: "mm",
+    margins: 0,
+  });
 
-  const data = lines.join("\n") + "\n\n\n\n";
+  const html = `
+    <html>
+      <body style="margin:0; padding:4mm; font-family: 'Courier New', monospace; font-size: 12px; width: 72mm;">
+        ${lines.map((l) => `<div>${l === "" ? "&nbsp;" : l}</div>`).join("")}
+      </body>
+    </html>
+  `;
 
   const printData = [
     {
-      type: "raw",
-      format: "plain",
-      data: data,
+      type: "pixel",
+      format: "html",
+      flavor: "plain",
+      data: html,
     },
   ];
 
@@ -53,3 +64,4 @@ export async function isQzTrayRunning() {
     return false;
   }
 }
+
