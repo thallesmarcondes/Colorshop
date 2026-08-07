@@ -3,7 +3,7 @@ import {
   LayoutGrid, ArrowUpRight, ArrowDownLeft, Wallet, Users, Truck,
   RefreshCw, Plus, X, Trash2, Search, Download, Home, Loader2, Pencil, Receipt, Check, Copy,
   Lock, UserCog, LogOut, FileText, Printer, MessageCircle, Eye, EyeOff,
-  Menu, Image as ImageIcon, Camera, TrendingUp, Award
+  Menu, Image as ImageIcon, Camera, TrendingUp, Award, List
 } from "lucide-react";
 import { supabase } from "./supabaseConfig";
 
@@ -553,6 +553,30 @@ export default function ColorShopDashboard() {
     const cliente = clientes.find((c) => c.id === venda.clienteId);
     const fone = cliente?.contato ? cliente.contato.replace(/[^\d]/g, "") : "";
     const url = fone ? `https://wa.me/${fone}?text=${encodeURIComponent(texto)}` : `https://wa.me/?text=${encodeURIComponent(texto)}`;
+    window.open(url, "_blank");
+  }
+
+  function gerarTextoListaAtacado() {
+    const disponiveis = estoque.filter((i) => i.qtd > 0).sort((a, b) => a.nome.localeCompare(b.nome));
+    const linhas = disponiveis.map((i) => `• ${i.nome}${i.marca ? ` (${i.marca})` : ""} — ${fmtUSD(i.atacado)}`);
+    return [
+      "*INDUFARMA — DISTRIBUIDORA*",
+      "_Lista de preços — Atacado_",
+      "",
+      ...linhas,
+      "",
+      `Atualizado em ${fmtDate(todayISO())}. Preços sujeitos a alteração sem aviso prévio.`,
+      "Qualquer dúvida, estamos à disposição!",
+    ].join("\n");
+  }
+  function abrirWhatsappListaAtacado(fone) {
+    const texto = gerarTextoListaAtacado();
+    const url = fone ? `https://wa.me/${fone}?text=${encodeURIComponent(texto)}` : `https://wa.me/?text=${encodeURIComponent(texto)}`;
+    window.open(url, "_blank");
+  }
+  function abrirWhatsappContato(pessoa) {
+    const fone = pessoa?.contato ? pessoa.contato.replace(/[^\d]/g, "") : "";
+    const url = fone ? `https://wa.me/${fone}` : `https://wa.me/`;
     window.open(url, "_blank");
   }
 
@@ -1201,15 +1225,23 @@ export default function ColorShopDashboard() {
   }
 
   function PessoasPage({ title, data, setData, placeholder }) {
-    const showContato = isAdmin;
+    const isClientes = title === "Clientes";
+    const showContato = isAdmin || isClientes;
     return (
       <TableShell
         title={title}
         sub={`${data.length} cadastros`}
         action={
-          <button onClick={() => setModal(title === "Clientes" ? "cliente" : "fornecedor")} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
-            <Plus size={14} /> Novo
-          </button>
+          <div className="flex items-center gap-2">
+            {isClientes && (
+              <button onClick={() => abrirWhatsappListaAtacado()} className="flex items-center gap-1.5 text-sm font-medium border border-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-50">
+                <List size={14} /> Enviar lista de atacado
+              </button>
+            )}
+            <button onClick={() => setModal(isClientes ? "cliente" : "fornecedor")} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
+              <Plus size={14} /> Novo
+            </button>
+          </div>
         }
       >
         <table className="w-full text-sm">
@@ -1217,6 +1249,7 @@ export default function ColorShopDashboard() {
             <tr className="text-left text-[11px] tracking-wide text-gray-400 border-b border-gray-100">
               <th className="px-5 py-2 font-medium">NOME</th>
               {showContato && <th className="px-5 py-2 font-medium">CONTATO</th>}
+              {isClientes && isAdmin && <th className="px-5 py-2 font-medium">CADASTRADO POR</th>}
               <th className="px-5 py-2 font-medium">AÇÕES</th>
             </tr>
           </thead>
@@ -1225,19 +1258,32 @@ export default function ColorShopDashboard() {
               <tr key={p.id} className="border-b border-gray-50">
                 <td className="px-5 py-3 font-medium text-gray-900">{p.nome}</td>
                 {showContato && <td className="px-5 py-3 text-gray-600">{p.contato || "—"}</td>}
+                {isClientes && isAdmin && <td className="px-5 py-3 text-gray-600">{p.criadoPor || "—"}</td>}
                 <td className="px-5 py-3">
-                  {isAdmin ? (
-                    <button onClick={() => setData((d) => d.filter((x) => x.id !== p.id))} className="text-gray-400 hover:text-red-600">
-                      <Trash2 size={15} />
-                    </button>
-                  ) : (
-                    <span className="text-gray-300">—</span>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {isClientes && p.contato && (
+                      <>
+                        <button onClick={() => abrirWhatsappContato(p)} className="text-gray-400 hover:text-emerald-700" title="Enviar mensagem no WhatsApp">
+                          <MessageCircle size={15} />
+                        </button>
+                        <button onClick={() => abrirWhatsappListaAtacado(p.contato.replace(/[^\d]/g, ""))} className="text-gray-400 hover:text-emerald-700" title="Enviar lista de atacado">
+                          <List size={15} />
+                        </button>
+                      </>
+                    )}
+                    {isAdmin ? (
+                      <button onClick={() => setData((d) => d.filter((x) => x.id !== p.id))} className="text-gray-400 hover:text-red-600">
+                        <Trash2 size={15} />
+                      </button>
+                    ) : (
+                      !isClientes && <span className="text-gray-300">—</span>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
             {data.length === 0 && (
-              <tr><td colSpan={showContato ? 3 : 2} className="py-8 text-center text-gray-400 text-sm">{placeholder}</td></tr>
+              <tr><td colSpan={showContato ? (isClientes && isAdmin ? 4 : 3) : 2} className="py-8 text-center text-gray-400 text-sm">{placeholder}</td></tr>
             )}
           </tbody>
         </table>
@@ -1517,7 +1563,8 @@ export default function ColorShopDashboard() {
   // ---------- MODALS ----------
 
   function VendaModal() {
-    const [clienteId, setClienteId] = useState(clientes[0]?.id || "");
+    const clientesVisiveis = isAdmin ? clientes : clientes.filter((c) => c.criadoPor === authUser?.nome);
+    const [clienteId, setClienteId] = useState(clientesVisiveis[0]?.id || "");
     const [filtroMarca, setFiltroMarca] = useState("");
     const [filtroTipo, setFiltroTipo] = useState("");
     const marcas = useMemo(() => Array.from(new Set(estoque.map((i) => i.marca).filter(Boolean))).sort(), [estoque]);
@@ -1569,7 +1616,7 @@ export default function ColorShopDashboard() {
         <Field label="Cliente">
           <select className={inputCls} value={clienteId} onChange={(e) => setClienteId(e.target.value)}>
             <option value="">Sem nome</option>
-            {clientes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            {clientesVisiveis.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
           </select>
         </Field>
 
@@ -1706,6 +1753,7 @@ export default function ColorShopDashboard() {
   }
 
   function OrcamentoModal() {
+    const clientesVisiveis = isAdmin ? clientes : clientes.filter((c) => c.criadoPor === authUser?.nome);
     const [clienteId, setClienteId] = useState("");
     const [clienteNomeLivre, setClienteNomeLivre] = useState("");
     const [filtroMarca, setFiltroMarca] = useState("");
@@ -1760,7 +1808,7 @@ export default function ColorShopDashboard() {
         <Field label="Cliente cadastrado (opcional)">
           <select className={inputCls} value={clienteId} onChange={(e) => setClienteId(e.target.value)}>
             <option value="">— Selecionar —</option>
-            {clientes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            {clientesVisiveis.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
           </select>
         </Field>
         {!clienteId && (
@@ -2280,7 +2328,7 @@ export default function ColorShopDashboard() {
         <button
           onClick={() => {
             if (!nome) return;
-            if (isCliente) setClientes((c) => [...c, { id: uid(), nome, contato }]);
+            if (isCliente) setClientes((c) => [...c, { id: uid(), nome, contato, criadoPor: authUser?.nome || null }]);
             else setFornecedores((f) => [...f, { id: uid(), nome, contato }]);
             setModal(null);
           }}
@@ -2443,7 +2491,7 @@ export default function ColorShopDashboard() {
     compras: <ComprasPage />,
     caixa: <CaixaPage />,
     contas: <ContasPage />,
-    clientes: <PessoasPage title="Clientes" data={clientes} setData={setClientes} placeholder="Nenhum cliente cadastrado." />,
+    clientes: <PessoasPage title="Clientes" data={isAdmin ? clientes : clientes.filter((c) => c.criadoPor === authUser?.nome)} setData={setClientes} placeholder={isAdmin ? "Nenhum cliente cadastrado." : "Você ainda não cadastrou nenhum cliente."} />,
     fornecedores: <PessoasPage title="Fornecedores" data={fornecedores} setData={setFornecedores} placeholder="Nenhum fornecedor cadastrado." />,
     cambio: <CambioPage />,
     vendedores: <VendedoresPage />,
