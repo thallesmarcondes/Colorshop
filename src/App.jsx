@@ -701,13 +701,27 @@ export default function ColorShopDashboard() {
 
   function gerarTextoListaAtacado() {
     const disponiveis = estoque.filter((i) => i.qtd > 0).sort((a, b) => a.nome.localeCompare(b.nome));
-    const linhas = disponiveis.map((i) => `• ${i.nome}${i.marca ? ` (${i.marca})` : ""} — ${fmtUSD(i.atacado)}`);
+    const grupos = {};
+    disponiveis.forEach((i) => {
+      const chave = i.marca || "Sem marca";
+      if (!grupos[chave]) grupos[chave] = [];
+      grupos[chave].push(i);
+    });
+    const marcasOrdenadas = Object.keys(grupos).sort((a, b) => {
+      if (a === "Sem marca") return 1;
+      if (b === "Sem marca") return -1;
+      return a.localeCompare(b);
+    });
+    const blocos = marcasOrdenadas.flatMap((marca) => [
+      `*${marca.toUpperCase()}*`,
+      ...grupos[marca].map((i) => `• ${i.nome} — ${fmtUSD(i.atacado)}`),
+      "",
+    ]);
     return [
       "*INDUFARMA — DISTRIBUIDORA*",
       "_Lista de preços — Atacado_",
       "",
-      ...linhas,
-      "",
+      ...blocos,
       `Atualizado em ${fmtDate(todayISO())}. Preços sujeitos a alteração sem aviso prévio.`,
       "Qualquer dúvida, estamos à disposição!",
     ].join("\n");
