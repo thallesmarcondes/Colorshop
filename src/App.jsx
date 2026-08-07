@@ -226,6 +226,7 @@ export default function ColorShopDashboard() {
   const [modal, setModal] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
   const [editingVenda, setEditingVenda] = useState(null);
+  const [editingCompra, setEditingCompra] = useState(null);
   const [editingConta, setEditingConta] = useState(null);
   const [payingConta, setPayingConta] = useState(null);
   const [receivingVenda, setReceivingVenda] = useState(null);
@@ -475,20 +476,97 @@ export default function ColorShopDashboard() {
     setEstoque(estoqueAtualizado);
     const total = itens.reduce((s, l) => s + l.custo * l.qtd, 0);
     const fornecedorNome = fornecedor ? fornecedor.nome : "Sem nome";
-    setCompras((c) => [
-      { id: uid(), fornecedorNome, itens: itens.map((l) => ({ nome: l.nome, qtd: l.qtd, custo: l.custo, subtotal: l.custo * l.qtd })), total, condicao, vencimento: condicao === "A prazo" ? vencimento : null, data: todayISO() },
-      ...c,
-    ]);
+    const compraId = uid();
+    let contaId = null;
     if (condicao === "A prazo") {
+      contaId = uid();
       setContas((cs) => [
-        { id: uid(), nome: `Fornecedor: ${fornecedorNome}`, categoria: "Fornecedor", valor: total, vencimento, status: "Pendente", dataPagamento: null },
+        { id: contaId, nome: `Fornecedor: ${fornecedorNome}`, categoria: "Fornecedor", valor: total, vencimento, status: "Pendente", dataPagamento: null },
         ...cs,
       ]);
     } else {
       const key = pagamento === "USDT" ? "usdt" : pagamento === "Dólar" ? "dolar" : pagamento === "PIX" ? "pix" : "real";
       addMovimento(key, "Saída", total, `Compra de ${fornecedorNome} (${itens.length} ${itens.length === 1 ? "item" : "itens"})`);
     }
+    setCompras((c) => [
+      { id: compraId, fornecedorId, fornecedorNome, itens: itens.map((l) => ({ nome: l.nome, marca: l.marca || "", tipo: l.tipo || "", qtd: l.qtd, custo: l.custo, custoVendedor: l.custoVendedor ?? l.custo, varejo: l.varejo, atacado: l.atacado, subtotal: l.custo * l.qtd })), total, pagamento, condicao, vencimento: condicao === "A prazo" ? vencimento : null, contaId, data: todayISO() },
+      ...c,
+    ]);
     setModal(null);
+  }
+
+  function editarCompra(id, { fornecedorId, itens, pagamento, condicao, vencimento }) {
+    if (!isAdmin) return;
+    const original = compras.find((c) => c.id === id);
+    if (!original || !itens || itens.length === 0) return;
+    // reverte as quantidades antigas do estoque (sem deixar negativo)
+    let estoqueRevertido = estoque;
+    (original.itens || []).forEach((l) => {
+      const existing = estoqueRevertido.find((i) => i.nome.toLowerCase() === l.nome.toLowerCase());
+      if (existing) {
+        estoqueRevertido = estoqueRevertido.map((i) => (i.id === existing.id ? { ...i, qtd: Math.max(0, i.qtd - l.qtd) } : i));
+      }
+    });
+    // aplica as novas quantidades
+    let estoqueFinal = estoqueRevertido;
+    itens.forEach((l) => {
+      const existing = estoqueFinal.find((i) => i.nome.toLowerCase() === l.nome.toLowerCase());
+      if (existing) {
+        estoqueFinal = estoqueFinal.map((i) =>
+          i.id === existing.id
+            ? { ...i, qtd: i.qtd + l.qtd, custo: l.custo, custoVendedor: l.custoVendedor ?? i.custoVendedor, marca: l.marca || i.marca, tipo: l.tipo || i.tipo }
+            : i
+        );
+      } else {
+        estoqueFinal = [...estoqueFinal, { id: uid(), nome: l.nome, marca: l.marca || "", tipo: l.tipo || "", qtd: l.qtd, custo: l.custo, custoVendedor: l.custoVendedor ?? l.custo, varejo: l.varejo || l.custo * 1.3, atacado: l.atacado || l.custo * 1.15, min: 3 }];
+      }
+    });
+    setEstoque(estoqueFinal);
+
+    const fornecedor = fornecedores.find((f) => f.id === fornecedorId);
+    const fornecedorNome = fornecedor ? fornecedor.nome : "Sem nome";
+    const total = itens.reduce((s, l) => s + l.custo * l.qtd, 0);
+
+    // reverte o efeito financeiro antigo
+    if (original.condicao === "A prazo") {
+      if (original.contaId) setContas((cs) => cs.filter((c) => c.id !== original.contaId));
+    } else {
+      const oldKey = original.pagamento === "USDT" ? "usdt" : original.pagamento === "Dólar" ? "dolar" : original.pagamento === "PIX" ? "pix" : "real";
+      addMovimento(oldKey, "Entrada", original.total, `Estorno por edição da compra #${id.slice(0, 6)}`);
+    }
+    // aplica o novo efeito financeiro
+    let novoContaId = null;
+    if (condicao === "A prazo") {
+      novoContaId = uid();
+      setContas((cs) => [
+        { id: novoContaId, nome: `Fornecedor: ${fornecedorNome}`, categoria: "Fornecedor", valor: total, vencimento, status: "Pendente", dataPagamento: null },
+        ...cs,
+      ]);
+    } else {
+      const newKey = pagamento === "USDT" ? "usdt" : pagamento === "Dólar" ? "dolar" : pagamento === "PIX" ? "pix" : "real";
+      addMovimento(newKey, "Saída", total, `Compra de ${fornecedorNome} (editada)`);
+    }
+
+    setCompras((cs) =>
+      cs.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              fornecedorId,
+              fornecedorNome,
+              itens: itens.map((l) => ({ nome: l.nome, marca: l.marca || "", tipo: l.tipo || "", qtd: l.qtd, custo: l.custo, custoVendedor: l.custoVendedor ?? l.custo, varejo: l.varejo, atacado: l.atacado, subtotal: l.custo * l.qtd })),
+              total,
+              pagamento,
+              condicao,
+              vencimento: condicao === "A prazo" ? vencimento : null,
+              contaId: novoContaId,
+              editadoPor: authUser?.nome || null,
+            }
+          : c
+      )
+    );
+    setModal(null);
+    setEditingCompra(null);
   }
 
   const contasPendentes = useMemo(() => contas.filter((c) => c.status === "Pendente"), [contas]);
@@ -569,6 +647,8 @@ export default function ColorShopDashboard() {
         ${itensHtml}
         <div class="sep"></div>
         <div class="total-row"><span>TOTAL</span><span>${fmtUSD(venda.valor)}</span></div>
+        ${linha("Total em R$", fmtBRL(venda.valor * cambio.chacoVenda))}
+        ${linha("Câmbio Chaco (venda)", fmtBRL(cambio.chacoVenda) + "/US$")}
         <div class="sep"></div>
         ${linha("Pagamento", `${venda.pagamento} (${venda.condicao})`)}
         ${venda.vencimento ? linha("Vencimento", fmtDate(venda.vencimento)) : ""}
@@ -601,6 +681,8 @@ export default function ColorShopDashboard() {
       linhas,
       "",
       `*Total: ${fmtUSD(venda.valor)}*`,
+      `Total em R$: ${fmtBRL(venda.valor * cambio.chacoVenda)}`,
+      `Câmbio Chaco (venda) do dia: ${fmtBRL(cambio.chacoVenda)}/US$`,
       `Pagamento: ${venda.pagamento} (${venda.condicao})`,
       venda.vencimento ? `Vencimento: ${fmtDate(venda.vencimento)}` : null,
       `Status: ${venda.status}`,
@@ -1204,7 +1286,7 @@ export default function ColorShopDashboard() {
         title="Compras"
         sub={`${compras.length} registros`}
         action={
-          <button onClick={() => setModal("compra")} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
+          <button onClick={() => { setEditingCompra(null); setModal("compra"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
             <Plus size={14} /> Nova compra
           </button>
         }
@@ -1216,23 +1298,32 @@ export default function ColorShopDashboard() {
               <th className="px-5 py-2 font-medium">ITENS</th>
               <th className="px-5 py-2 font-medium">TOTAL</th>
               <th className="px-5 py-2 font-medium">DATA</th>
+              <th className="px-5 py-2 font-medium">AÇÕES</th>
             </tr>
           </thead>
           <tbody>
             {compras.map((c) => (
               <tr key={c.id} className="border-b border-gray-50">
-                <td className="px-5 py-3 font-medium text-gray-900 align-top">{c.fornecedorNome}</td>
+                <td className="px-5 py-3 font-medium text-gray-900 align-top">
+                  {c.fornecedorNome}
+                  {c.editadoPor && <div className="text-[10px] font-normal text-amber-600 mt-0.5">editada</div>}
+                </td>
                 <td className="px-5 py-3 text-gray-600">
                   {(c.itens || []).map((l, idx) => (
-                    <div key={idx} className={idx > 0 ? "mt-1" : ""}>{l.nome} × {l.qtd}</div>
+                    <div key={idx} className={idx > 0 ? "mt-1" : ""}>{l.nome}{l.marca ? ` — ${l.marca}` : ""} × {l.qtd}</div>
                   ))}
                 </td>
                 <td className="px-5 py-3 font-medium text-gray-900 align-top">{fmtUSD(c.total)}</td>
                 <td className="px-5 py-3 text-gray-600 align-top">{fmtDate(c.data)}</td>
+                <td className="px-5 py-3 align-top">
+                  <button onClick={() => { setEditingCompra(c); setModal("compra"); }} className="text-gray-400 hover:text-emerald-700" title="Editar compra">
+                    <Pencil size={15} />
+                  </button>
+                </td>
               </tr>
             ))}
             {compras.length === 0 && (
-              <tr><td colSpan={4} className="py-8 text-center text-gray-400 text-sm">Nenhuma compra registrada.</td></tr>
+              <tr><td colSpan={5} className="py-8 text-center text-gray-400 text-sm">Nenhuma compra registrada.</td></tr>
             )}
           </tbody>
         </table>
@@ -1444,6 +1535,8 @@ export default function ColorShopDashboard() {
       linhas,
       "",
       `*Total: ${fmtUSD(orc.total)}*`,
+      `Total em R$: ${fmtBRL(orc.total * cambio.chacoVenda)}`,
+      `Câmbio Chaco (venda) do dia: ${fmtBRL(cambio.chacoVenda)}/US$`,
       "",
       `⚠️ Orçamento válido somente para o dia ${fmtDate(orc.data)}.`,
       "_Este orçamento não tem valor fiscal._",
@@ -1515,6 +1608,10 @@ export default function ColorShopDashboard() {
           <tbody>${linhas}</tbody>
         </table>
         <div class="total"><span>Total</span><span>${fmtUSD(orc.total)}</span></div>
+        <div class="info" style="margin-top:8px; margin-bottom:0;">
+          <div class="row"><span>Total em R$</span><strong>${fmtBRL(orc.total * cambio.chacoVenda)}</strong></div>
+          <div class="row"><span>Câmbio Chaco (venda)</span><strong>${fmtBRL(cambio.chacoVenda)}/US$</strong></div>
+        </div>
         <div class="validade">⚠️ Orçamento válido somente para o dia ${fmtDate(orc.data)}</div>
         <div class="footer">Este orçamento não tem valor fiscal.<br/>Distribuidora Indufarma · Obrigado pela preferência!</div>
       </body>
@@ -2028,7 +2125,8 @@ export default function ColorShopDashboard() {
   }
 
   function CompraModal() {
-    const [fornecedorId, setFornecedorId] = useState(fornecedores[0]?.id || "");
+    const isEdit = !!editingCompra;
+    const [fornecedorId, setFornecedorId] = useState(editingCompra?.fornecedorId || fornecedores[0]?.id || "");
     const [nome, setNome] = useState("");
     const [marca, setMarca] = useState("");
     const [tipo, setTipo] = useState("");
@@ -2037,10 +2135,12 @@ export default function ColorShopDashboard() {
     const [custoVendedor, setCustoVendedor] = useState(0);
     const [varejo, setVarejo] = useState(0);
     const [atacado, setAtacado] = useState(0);
-    const [pagamento, setPagamento] = useState("PIX");
-    const [condicao, setCondicao] = useState("À vista");
-    const [vencimento, setVencimento] = useState(todayISO());
-    const [carrinho, setCarrinho] = useState([]);
+    const [pagamento, setPagamento] = useState(editingCompra?.pagamento || "PIX");
+    const [condicao, setCondicao] = useState(editingCompra?.condicao || "À vista");
+    const [vencimento, setVencimento] = useState(editingCompra?.vencimento || todayISO());
+    const [carrinho, setCarrinho] = useState(
+      isEdit ? (editingCompra.itens || []).map((l) => ({ key: uid(), ...l })) : []
+    );
 
     const nomeTrim = nome.trim();
     const isNovoProduto = nomeTrim !== "" && !estoque.some((i) => i.nome.toLowerCase() === nomeTrim.toLowerCase());
@@ -2060,6 +2160,11 @@ export default function ColorShopDashboard() {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [nomeTrim]);
 
+    function fecharModal() {
+      setModal(null);
+      setEditingCompra(null);
+    }
+
     function addAoCarrinho() {
       if (!podeAdicionar) return;
       setCarrinho((c) => [...c, { key: uid(), nome: nomeTrim, marca, tipo, qtd, custo, custoVendedor, varejo, atacado }]);
@@ -2070,11 +2175,13 @@ export default function ColorShopDashboard() {
     }
     function finalizar() {
       if (carrinho.length === 0) return;
-      registrarCompra({ fornecedorId, itens: carrinho, pagamento, condicao, vencimento });
+      const payload = { fornecedorId, itens: carrinho, pagamento, condicao, vencimento };
+      if (isEdit) editarCompra(editingCompra.id, payload);
+      else registrarCompra(payload);
     }
 
     return (
-      <Modal title="Nova compra" onClose={() => setModal(null)} wide>
+      <Modal title={isEdit ? "Editar compra" : "Nova compra"} onClose={fecharModal} wide>
         <Field label="Fornecedor">
           <select className={inputCls} value={fornecedorId} onChange={(e) => setFornecedorId(e.target.value)}>
             <option value="">Sem nome</option>
@@ -2192,7 +2299,7 @@ export default function ColorShopDashboard() {
           disabled={carrinho.length === 0}
           className="w-full bg-emerald-800 hover:bg-emerald-900 disabled:opacity-40 text-white rounded-md py-2 text-sm font-medium"
         >
-          Finalizar compra
+          {isEdit ? "Salvar alterações" : "Finalizar compra"}
         </button>
       </Modal>
     );
