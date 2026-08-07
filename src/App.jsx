@@ -365,7 +365,7 @@ export default function ColorShopDashboard() {
     setMovimentos((m) => [{ id: uid(), caixa: caixaKey, tipo, valor, descricao, data: todayISO() }, ...m]);
   }
 
-  function registrarVenda({ clienteId, itens, pagamento, condicao, vencimento }) {
+  function registrarVenda({ clienteId, itens, pagamento, condicao, vencimento, vendedorNome }) {
     if (!itens || itens.length === 0) return;
     // validate stock per item (aggregate qty per itemId in case of duplicates)
     const qtdPorItem = {};
@@ -394,7 +394,7 @@ export default function ColorShopDashboard() {
     const id = nextVendaId;
     setEstoque((e) => e.map((i) => (qtdPorItem[i.id] ? { ...i, qtd: i.qtd - qtdPorItem[i.id] } : i)));
     setVendas((v) => [
-      { id, clienteId, clienteNome: cliente ? cliente.nome : "Sem nome", itens: linhas, valor, pagamento, condicao, vencimento: condicao === "A prazo" ? vencimento : null, status: condicao === "À vista" ? "Pago" : "Pendente", data: todayISO(), vendedor: authUser?.nome || null },
+      { id, clienteId, clienteNome: cliente ? cliente.nome : "Sem nome", itens: linhas, valor, pagamento, condicao, vencimento: condicao === "A prazo" ? vencimento : null, status: condicao === "À vista" ? "Pago" : "Pendente", data: todayISO(), vendedor: (isAdmin && vendedorNome) ? vendedorNome : (authUser?.nome || null) },
       ...v,
     ]);
     if (condicao === "À vista") {
@@ -404,7 +404,7 @@ export default function ColorShopDashboard() {
     setModal(null);
   }
 
-  function editarVenda(id, { clienteId, itens, pagamento, condicao, vencimento }) {
+  function editarVenda(id, { clienteId, itens, pagamento, condicao, vencimento, vendedorNome }) {
     if (!isAdmin) return;
     const original = vendas.find((v) => v.id === id);
     if (!original || !itens || itens.length === 0) return;
@@ -446,6 +446,7 @@ export default function ColorShopDashboard() {
               condicao,
               vencimento: condicao === "A prazo" ? vencimento : null,
               status: condicao === "À vista" ? "Pago" : v.status === "Pago" ? "Pago" : "Pendente",
+              vendedor: vendedorNome || v.vendedor,
               editadoPor: authUser?.nome || null,
             }
           : v
@@ -1636,6 +1637,8 @@ export default function ColorShopDashboard() {
     const isEdit = !!editingVenda;
     const clientesVisiveis = isAdmin ? clientes : clientes.filter((c) => c.criadoPor === authUser?.nome);
     const [clienteId, setClienteId] = useState(editingVenda?.clienteId || clientesVisiveis[0]?.id || "");
+    const [vendedorNome, setVendedorNome] = useState(editingVenda?.vendedor || authUser?.nome || "");
+    const vendedoresDisponiveis = usuarios.filter((u) => u.papel === "vendedor" || u.papel === "admin");
     const [filtroMarca, setFiltroMarca] = useState("");
     const [filtroTipo, setFiltroTipo] = useState("");
 
@@ -1697,6 +1700,7 @@ export default function ColorShopDashboard() {
         pagamento,
         condicao,
         vencimento,
+        vendedorNome,
       };
       if (isEdit) editarVenda(editingVenda.id, payload);
       else registrarVenda(payload);
@@ -1704,6 +1708,13 @@ export default function ColorShopDashboard() {
 
     return (
       <Modal title={isEdit ? `Editar venda #${editingVenda.id}` : "Nova venda"} onClose={fecharModal} wide>
+        {isAdmin && (
+          <Field label="Vendedor responsável">
+            <select className={inputCls} value={vendedorNome} onChange={(e) => setVendedorNome(e.target.value)}>
+              {vendedoresDisponiveis.map((u) => <option key={u.id} value={u.nome}>{u.nome}{u.papel === "admin" ? " (admin)" : ""}</option>)}
+            </select>
+          </Field>
+        )}
         <Field label="Cliente">
           <select className={inputCls} value={clienteId} onChange={(e) => setClienteId(e.target.value)}>
             <option value="">Sem nome</option>
