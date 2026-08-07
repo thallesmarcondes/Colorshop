@@ -1,4 +1,4 @@
-# ColorShop
+# Indufarma
 
 Painel de gestão comercial (login, estoque, vendas, compras, caixa, contas a pagar, orçamentos, câmbio).
 
