@@ -383,7 +383,7 @@ export default function ColorShopDashboard() {
     const linhas = itens.map((l) => {
       const item = estoque.find((i) => i.id === l.itemId);
       const precoUnit = l.precoUnit != null ? l.precoUnit : (l.tipoVenda === "Atacado" ? item.atacado : item.varejo);
-      return { itemId: l.itemId, itemNome: item.nome, qtd: l.qtd, tipoVenda: l.tipoVenda, precoUnit, subtotal: precoUnit * l.qtd };
+      return { itemId: l.itemId, itemNome: item.nome, marca: item.marca || "", qtd: l.qtd, tipoVenda: l.tipoVenda, precoUnit, subtotal: precoUnit * l.qtd };
     });
     const valor = linhas.reduce((s, l) => s + l.subtotal, 0);
     const id = nextVendaId;
@@ -453,16 +453,19 @@ export default function ColorShopDashboard() {
   }
 
   function imprimirVenda(venda) {
-    const linhas = (venda.itens || [])
-      .map(
-        (l) => `
-        <tr>
-          <td style="padding:4px 0;">${l.itemNome}</td>
-          <td style="padding:4px 0;text-align:center;">${l.qtd}</td>
-          <td style="padding:4px 0;text-align:right;">${fmtUSD(l.precoUnit)}</td>
-          <td style="padding:4px 0;text-align:right;">${fmtUSD(l.subtotal)}</td>
-        </tr>`
-      )
+    const linha = (label, valor) => `<div class="row"><span>${label}</span><span>${valor}</span></div>`;
+    const itensHtml = (venda.itens || [])
+      .map((l) => {
+        const nomeLinha = `${l.itemNome}${l.marca ? ` (${l.marca})` : ""}`;
+        return `
+        <div class="item">
+          <div class="item-nome">${nomeLinha}</div>
+          <div class="row">
+            <span>${l.qtd} x ${fmtUSD(l.precoUnit)}</span>
+            <span>${fmtUSD(l.subtotal)}</span>
+          </div>
+        </div>`;
+      })
       .join("");
     const html = `
       <html>
@@ -470,36 +473,87 @@ export default function ColorShopDashboard() {
         <title>Nota de venda #${venda.id}</title>
         <meta charset="utf-8" />
         <style>
-          body { font-family: -apple-system, Arial, sans-serif; color: #111827; padding: 24px; max-width: 420px; margin: 0 auto; }
-          h1 { font-size: 18px; margin: 0 0 2px; }
-          .muted { color: #6b7280; font-size: 12px; }
-          table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13px; }
-          thead th { text-align: left; border-bottom: 1px solid #111827; padding-bottom: 4px; font-size: 11px; text-transform: uppercase; color: #6b7280; }
-          tbody tr { border-bottom: 1px solid #e5e7eb; }
-          .total { display: flex; justify-content: space-between; font-weight: bold; font-size: 15px; margin-top: 16px; border-top: 1px solid #111827; padding-top: 8px; }
-          .row { display: flex; justify-content: space-between; font-size: 13px; margin-top: 4px; }
-          .footer { margin-top: 24px; text-align: center; font-size: 11px; color: #9ca3af; }
+          @page { size: 80mm auto; margin: 0; }
+          * { box-sizing: border-box; }
+          body {
+            width: 72mm;
+            margin: 0 auto;
+            padding: 3mm 3mm 6mm;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            line-height: 1.45;
+            color: #000;
+          }
+          .center { text-align: center; }
+          .brand-name { font-size: 15px; font-weight: 700; letter-spacing: 0.03em; }
+          .subtitle { font-size: 10.5px; margin-top: 1px; }
+          .sep { border-top: 1px dashed #000; margin: 6px 0; }
+          .row { display: flex; justify-content: space-between; font-size: 12px; }
+          .item { margin: 5px 0; }
+          .item-nome { font-weight: 600; }
+          .total-row { display: flex; justify-content: space-between; font-weight: 700; font-size: 14px; margin-top: 4px; }
+          .footer { margin-top: 10px; font-size: 10.5px; }
         </style>
       </head>
       <body>
-        <h1>Indufarma</h1>
-        <div class="muted">Nota de venda #${venda.id} · ${fmtDate(venda.data)}</div>
-        <div class="row"><span>Cliente</span><strong>${venda.clienteNome}</strong></div>
-        <div class="row"><span>Pagamento</span><span>${venda.pagamento} (${venda.condicao})</span></div>
-        <table>
-          <thead><tr><th>Item</th><th style="text-align:center;">Qtd</th><th style="text-align:right;">Unit.</th><th style="text-align:right;">Subtotal</th></tr></thead>
-          <tbody>${linhas}</tbody>
-        </table>
-        <div class="total"><span>Total</span><span>${fmtUSD(venda.valor)}</span></div>
-        <div class="footer">Obrigado pela preferência!</div>
+        <div class="center">
+          <div class="brand-name">DISTRIBUIDORA INDUFARMA</div>
+          <div class="subtitle">Nota de venda #${venda.id}</div>
+        </div>
+        <div class="sep"></div>
+        ${linha("Cliente", venda.clienteNome)}
+        ${linha("Vendedor", venda.vendedor || "—")}
+        ${linha("Data", fmtDate(venda.data))}
+        <div class="sep"></div>
+        ${itensHtml}
+        <div class="sep"></div>
+        <div class="total-row"><span>TOTAL</span><span>${fmtUSD(venda.valor)}</span></div>
+        <div class="sep"></div>
+        ${linha("Pagamento", `${venda.pagamento} (${venda.condicao})`)}
+        ${venda.vencimento ? linha("Vencimento", fmtDate(venda.vencimento)) : ""}
+        ${linha("Status", venda.status)}
+        <div class="sep"></div>
+        <div class="center footer">Esta nota não tem valor fiscal.<br/>Obrigado pela preferência!<br/>Distribuidora Indufarma</div>
       </body>
       </html>`;
-    const win = window.open("", "_blank", "width=420,height=600");
+    const win = window.open("", "_blank", "width=320,height=600");
     if (!win) return;
     win.document.write(html);
     win.document.close();
     win.focus();
     setTimeout(() => win.print(), 300);
+  }
+
+  function gerarTextoVenda(venda) {
+    const linhas = (venda.itens || [])
+      .map((l) => `• ${l.itemNome}${l.marca ? ` (${l.marca})` : ""} x${l.qtd} — ${fmtUSD(l.subtotal)}`)
+      .join("\n");
+    return [
+      "*INDUFARMA — DISTRIBUIDORA*",
+      "_Comprovante de venda_",
+      "",
+      `Venda #${venda.id} · ${fmtDate(venda.data)}`,
+      `Cliente: ${venda.clienteNome}`,
+      venda.vendedor ? `Atendido por: ${venda.vendedor}` : null,
+      "",
+      "*Itens:*",
+      linhas,
+      "",
+      `*Total: ${fmtUSD(venda.valor)}*`,
+      `Pagamento: ${venda.pagamento} (${venda.condicao})`,
+      venda.vencimento ? `Vencimento: ${fmtDate(venda.vencimento)}` : null,
+      `Status: ${venda.status}`,
+      "",
+      "_Esta nota não tem valor fiscal._",
+      "Obrigado pela preferência! 💚",
+    ].filter((l) => l !== null).join("\n");
+  }
+  function abrirWhatsappVenda(venda) {
+    const texto = gerarTextoVenda(venda);
+    const cliente = clientes.find((c) => c.id === venda.clienteId);
+    const fone = cliente?.contato ? cliente.contato.replace(/[^\d]/g, "") : "";
+    const url = fone ? `https://wa.me/${fone}?text=${encodeURIComponent(texto)}` : `https://wa.me/?text=${encodeURIComponent(texto)}`;
+    window.open(url, "_blank");
   }
 
   function duplicarConta(id) {
@@ -914,7 +968,7 @@ export default function ColorShopDashboard() {
                 <td className="px-5 py-3 text-gray-600">
                   {(v.itens || []).map((l, idx) => (
                     <div key={idx} className={idx > 0 ? "mt-1" : ""}>
-                      {l.itemNome} × {l.qtd} <span className="text-xs text-gray-400">({l.tipoVenda})</span>
+                      {l.itemNome}{l.marca ? ` — ${l.marca}` : ""} × {l.qtd} <span className="text-xs text-gray-400">({l.tipoVenda})</span>
                     </div>
                   ))}
                 </td>
@@ -926,9 +980,14 @@ export default function ColorShopDashboard() {
                 </td>
                 <td className="px-5 py-3 align-top"><Badge status={v.status} /></td>
                 <td className="px-5 py-3 align-top">
-                  <button onClick={() => imprimirVenda(v)} className="text-gray-400 hover:text-emerald-700" title="Imprimir nota">
-                    <Printer size={15} />
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => imprimirVenda(v)} className="text-gray-400 hover:text-emerald-700" title="Imprimir nota">
+                      <Printer size={15} />
+                    </button>
+                    <button onClick={() => abrirWhatsappVenda(v)} className="text-gray-400 hover:text-emerald-700" title="Enviar no WhatsApp">
+                      <MessageCircle size={15} />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -1255,7 +1314,7 @@ export default function ColorShopDashboard() {
   }
 
   function gerarTextoOrcamento(orc) {
-    const linhas = orc.itens.map((l) => `• ${l.nome} x${l.qtd} — ${fmtUSD(l.precoUnit * l.qtd)}`).join("\n");
+    const linhas = orc.itens.map((l) => `• ${l.nome}${l.marca ? ` (${l.marca})` : ""} x${l.qtd} — ${fmtUSD(l.precoUnit * l.qtd)}`).join("\n");
     return [
       "*INDUFARMA — DISTRIBUIDORA*",
       "_Orçamento comercial_",
@@ -1270,6 +1329,7 @@ export default function ColorShopDashboard() {
       `*Total: ${fmtUSD(orc.total)}*`,
       "",
       `⚠️ Orçamento válido somente para o dia ${fmtDate(orc.data)}.`,
+      "_Este orçamento não tem valor fiscal._",
       "Qualquer dúvida, estamos à disposição!",
     ].filter((l) => l !== null).join("\n");
   }
@@ -1292,7 +1352,7 @@ export default function ColorShopDashboard() {
       .map(
         (l) => `
         <tr>
-          <td style="padding:6px 0;">${l.nome}</td>
+          <td style="padding:6px 0;">${l.nome}${l.marca ? `<div style="font-size:11px;color:#6b7280;">Marca: ${l.marca}</div>` : ""}</td>
           <td style="padding:6px 0;text-align:center;">${l.qtd}</td>
           <td style="padding:6px 0;text-align:right;">${fmtUSD(l.precoUnit)}</td>
           <td style="padding:6px 0;text-align:right;">${fmtUSD(l.precoUnit * l.qtd)}</td>
@@ -1339,7 +1399,7 @@ export default function ColorShopDashboard() {
         </table>
         <div class="total"><span>Total</span><span>${fmtUSD(orc.total)}</span></div>
         <div class="validade">⚠️ Orçamento válido somente para o dia ${fmtDate(orc.data)}</div>
-        <div class="footer">Distribuidora Indufarma · Obrigado pela preferência!</div>
+        <div class="footer">Este orçamento não tem valor fiscal.<br/>Distribuidora Indufarma · Obrigado pela preferência!</div>
       </body>
       </html>`;
     const win = window.open("", "_blank", "width=480,height=680");
@@ -1671,7 +1731,7 @@ export default function ColorShopDashboard() {
     function addAoCarrinho() {
       if (!item || qtd < 1) return;
       if (abaixoDoCusto) return;
-      setCarrinho((c) => [...c, { key: uid(), nome: item.nome, qtd, tipoVenda, precoUnit }]);
+      setCarrinho((c) => [...c, { key: uid(), nome: item.nome, marca: item.marca || "", qtd, tipoVenda, precoUnit }]);
       setQtd(1);
     }
     function removerDoCarrinho(key) {
