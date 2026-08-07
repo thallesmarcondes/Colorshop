@@ -3,7 +3,7 @@ import {
   LayoutGrid, ArrowUpRight, ArrowDownLeft, Wallet, Users, Truck,
   RefreshCw, Plus, X, Trash2, Search, Download, Home, Loader2, Pencil, Receipt, Check, Copy,
   Lock, UserCog, LogOut, FileText, Printer, MessageCircle, Eye, EyeOff,
-  Menu, Image as ImageIcon, Camera
+  Menu, Image as ImageIcon, Camera, TrendingUp, Award
 } from "lucide-react";
 import { supabase } from "./supabaseConfig";
 
@@ -63,6 +63,7 @@ const NAV = [
   { key: "visao", label: "Visão geral", icon: Home, roles: ["admin", "vendedor"] },
   { key: "estoque", label: "Estoque", icon: LayoutGrid, roles: ["admin", "vendedor"] },
   { key: "vendas", label: "Vendas", icon: ArrowUpRight, roles: ["admin", "vendedor"] },
+  { key: "comissoes", label: "Desempenho e comissões", icon: TrendingUp, roles: ["admin"] },
   { key: "orcamentos", label: "Orçamentos", icon: FileText, roles: ["admin", "vendedor"] },
   { key: "compras", label: "Compras", icon: ArrowDownLeft, roles: ["admin"] },
   { key: "caixa", label: "Caixa", icon: Wallet, roles: ["admin"] },
@@ -940,6 +941,109 @@ export default function ColorShopDashboard() {
     );
   }
 
+  function ComissoesPage() {
+    const COMISSAO_PCT = 0.20;
+
+    const porVendedor = {};
+    vendas.forEach((v) => {
+      const nomeVendedor = v.vendedor || "Sem vendedor / Admin";
+      if (!porVendedor[nomeVendedor]) {
+        porVendedor[nomeVendedor] = { nome: nomeVendedor, numVendas: 0, unidades: 0, valorTotal: 0, lucro: 0, produtos: {} };
+      }
+      porVendedor[nomeVendedor].numVendas += 1;
+      (v.itens || []).forEach((l) => {
+        const itemEstoque = estoque.find((i) => i.id === l.itemId);
+        const custoRef = itemEstoque ? (itemEstoque.custoVendedor ?? itemEstoque.custo) : l.precoUnit;
+        const lucroItem = (l.precoUnit - custoRef) * l.qtd;
+        porVendedor[nomeVendedor].unidades += l.qtd;
+        porVendedor[nomeVendedor].valorTotal += l.precoUnit * l.qtd;
+        porVendedor[nomeVendedor].lucro += lucroItem;
+        porVendedor[nomeVendedor].produtos[l.itemNome] = (porVendedor[nomeVendedor].produtos[l.itemNome] || 0) + l.qtd;
+      });
+    });
+    const listaVendedores = Object.values(porVendedor)
+      .map((v) => ({
+        ...v,
+        comissao: v.lucro * COMISSAO_PCT,
+        top3: Object.entries(v.produtos).sort((a, b) => b[1] - a[1]).slice(0, 3),
+      }))
+      .sort((a, b) => b.valorTotal - a.valorTotal);
+
+    function topProduto(filterFn) {
+      const contagem = {};
+      vendas.filter(filterFn).forEach((v) => {
+        (v.itens || []).forEach((l) => {
+          contagem[l.itemNome] = (contagem[l.itemNome] || 0) + l.qtd;
+        });
+      });
+      const entradas = Object.entries(contagem).sort((a, b) => b[1] - a[1]);
+      return entradas[0] || null;
+    }
+
+    const hoje = todayISO();
+    const seteDiasAtras = (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - 6);
+      return d.toISOString().slice(0, 10);
+    })();
+    const inicioMes = hoje.slice(0, 7) + "-01";
+
+    const topDia = topProduto((v) => v.data === hoje);
+    const topSemana = topProduto((v) => v.data >= seteDiasAtras);
+    const topMes = topProduto((v) => v.data >= inicioMes);
+    const comissaoTotalGeral = listaVendedores.reduce((s, v) => s + v.comissao, 0);
+
+    return (
+      <>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+          <StatCard label="MAIS VENDIDO HOJE" value={topDia ? topDia[0] : "—"} sub={topDia ? `${topDia[1]} unidades` : "Sem vendas hoje"} />
+          <StatCard label="MAIS VENDIDO NA SEMANA" value={topSemana ? topSemana[0] : "—"} sub={topSemana ? `${topSemana[1]} unidades` : "Sem vendas"} />
+          <StatCard label="MAIS VENDIDO NO MÊS" value={topMes ? topMes[0] : "—"} sub={topMes ? `${topMes[1]} unidades` : "Sem vendas"} />
+        </div>
+
+        <TableShell
+          title="Desempenho e comissão por vendedor"
+          sub={`Comissão de 20% sobre o lucro, calculado com o custo do vendedor (não o custo real) · Total a pagar: ${fmtUSD(comissaoTotalGeral)}`}
+        >
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] tracking-wide text-gray-400 border-b border-gray-100">
+                <th className="px-5 py-2 font-medium">VENDEDOR</th>
+                <th className="px-5 py-2 font-medium">VENDAS</th>
+                <th className="px-5 py-2 font-medium">UNIDADES</th>
+                <th className="px-5 py-2 font-medium">VALOR VENDIDO</th>
+                <th className="px-5 py-2 font-medium">LUCRO</th>
+                <th className="px-5 py-2 font-medium">COMISSÃO (20%)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {listaVendedores.map((v) => (
+                <tr key={v.nome} className="border-b border-gray-50 align-top">
+                  <td className="px-5 py-3">
+                    <div className="font-medium text-gray-900">{v.nome}</div>
+                    {v.top3.length > 0 && (
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        {v.top3.map(([nome, qtd]) => `${nome} (${qtd})`).join(" · ")}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-5 py-3 text-gray-600">{v.numVendas}</td>
+                  <td className="px-5 py-3 text-gray-600">{v.unidades}</td>
+                  <td className="px-5 py-3 text-gray-600">{fmtUSD(v.valorTotal)}</td>
+                  <td className="px-5 py-3 text-gray-600">{fmtUSD(v.lucro)}</td>
+                  <td className="px-5 py-3 font-medium text-emerald-700">{fmtUSD(v.comissao)}</td>
+                </tr>
+              ))}
+              {listaVendedores.length === 0 && (
+                <tr><td colSpan={6} className="py-8 text-center text-gray-400 text-sm">Nenhuma venda registrada ainda.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </TableShell>
+      </>
+    );
+  }
+
   function ComprasPage() {
     return (
       <TableShell
@@ -1152,7 +1256,22 @@ export default function ColorShopDashboard() {
 
   function gerarTextoOrcamento(orc) {
     const linhas = orc.itens.map((l) => `• ${l.nome} x${l.qtd} — ${fmtUSD(l.precoUnit * l.qtd)}`).join("\n");
-    return `*Indufarma — Orçamento*\n${orc.clienteNome ? `Para: ${orc.clienteNome}\n` : ""}Data: ${fmtDate(orc.data)}\n\n${linhas}\n\n*Total: ${fmtUSD(orc.total)}*\n\n⚠️ Orçamento válido somente para o dia ${fmtDate(orc.data)}. Qualquer dúvida, é só chamar!`;
+    return [
+      "*INDUFARMA — DISTRIBUIDORA*",
+      "_Orçamento comercial_",
+      "",
+      `Data: ${fmtDate(orc.data)}`,
+      orc.clienteNome ? `Cliente: ${orc.clienteNome}` : null,
+      orc.vendedor ? `Atendido por: ${orc.vendedor}` : null,
+      "",
+      "*Itens:*",
+      linhas,
+      "",
+      `*Total: ${fmtUSD(orc.total)}*`,
+      "",
+      `⚠️ Orçamento válido somente para o dia ${fmtDate(orc.data)}.`,
+      "Qualquer dúvida, estamos à disposição!",
+    ].filter((l) => l !== null).join("\n");
   }
   function copiarOrcamento(orc) {
     const texto = gerarTextoOrcamento(orc);
@@ -1166,6 +1285,69 @@ export default function ColorShopDashboard() {
     const fone = cliente?.contato ? cliente.contato.replace(/[^\d]/g, "") : "";
     const url = fone ? `https://wa.me/${fone}?text=${encodeURIComponent(texto)}` : `https://wa.me/?text=${encodeURIComponent(texto)}`;
     window.open(url, "_blank");
+  }
+
+  function imprimirOrcamento(orc) {
+    const linhas = (orc.itens || [])
+      .map(
+        (l) => `
+        <tr>
+          <td style="padding:6px 0;">${l.nome}</td>
+          <td style="padding:6px 0;text-align:center;">${l.qtd}</td>
+          <td style="padding:6px 0;text-align:right;">${fmtUSD(l.precoUnit)}</td>
+          <td style="padding:6px 0;text-align:right;">${fmtUSD(l.precoUnit * l.qtd)}</td>
+        </tr>`
+      )
+      .join("");
+    const html = `
+      <html>
+      <head>
+        <title>Orçamento — ${orc.clienteNome || "Cliente"}</title>
+        <meta charset="utf-8" />
+        <style>
+          body { font-family: -apple-system, Arial, sans-serif; color: #111827; padding: 28px; max-width: 480px; margin: 0 auto; }
+          .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+          .brand img { height: 34px; object-fit: contain; }
+          .brand-name { font-size: 17px; font-weight: 700; color: #065f46; }
+          .subtitle { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 18px; }
+          .info { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; }
+          .info .row { display: flex; justify-content: space-between; font-size: 13px; padding: 2px 0; }
+          .info .row span:first-child { color: #6b7280; }
+          .info .row strong { color: #111827; }
+          table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 13px; }
+          thead th { text-align: left; border-bottom: 1.5px solid #111827; padding-bottom: 6px; font-size: 10.5px; text-transform: uppercase; color: #6b7280; letter-spacing: 0.03em; }
+          tbody tr { border-bottom: 1px solid #e5e7eb; }
+          .total { display: flex; justify-content: space-between; font-weight: bold; font-size: 16px; margin-top: 16px; border-top: 1.5px solid #111827; padding-top: 10px; color: #065f46; }
+          .validade { margin-top: 14px; background: #fef3c7; border: 1px solid #fde68a; color: #92400e; font-size: 12px; padding: 8px 12px; border-radius: 6px; text-align: center; font-weight: 600; }
+          .footer { margin-top: 24px; text-align: center; font-size: 11px; color: #9ca3af; }
+        </style>
+      </head>
+      <body>
+        <div class="brand">
+          <img src="${LOGO_ICON}" alt="Indufarma" />
+          <div class="brand-name">Distribuidora Indufarma</div>
+        </div>
+        <div class="subtitle">Orçamento comercial</div>
+        <div class="info">
+          <div class="row"><span>Cliente</span><strong>${orc.clienteNome || "—"}</strong></div>
+          <div class="row"><span>Atendido por</span><strong>${orc.vendedor || "—"}</strong></div>
+          <div class="row"><span>Data</span><strong>${fmtDate(orc.data)}</strong></div>
+        </div>
+        <table>
+          <thead><tr><th>Item</th><th style="text-align:center;">Qtd</th><th style="text-align:right;">Unit.</th><th style="text-align:right;">Subtotal</th></tr></thead>
+          <tbody>${linhas}</tbody>
+        </table>
+        <div class="total"><span>Total</span><span>${fmtUSD(orc.total)}</span></div>
+        <div class="validade">⚠️ Orçamento válido somente para o dia ${fmtDate(orc.data)}</div>
+        <div class="footer">Distribuidora Indufarma · Obrigado pela preferência!</div>
+      </body>
+      </html>`;
+    const win = window.open("", "_blank", "width=480,height=680");
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 300);
   }
 
   function OrcamentosPage() {
@@ -1183,6 +1365,7 @@ export default function ColorShopDashboard() {
           <thead>
             <tr className="text-left text-[11px] tracking-wide text-gray-400 border-b border-gray-100">
               <th className="px-5 py-2 font-medium">CLIENTE</th>
+              <th className="px-5 py-2 font-medium">VENDEDOR</th>
               <th className="px-5 py-2 font-medium">ITENS</th>
               <th className="px-5 py-2 font-medium">TOTAL</th>
               <th className="px-5 py-2 font-medium">DATA</th>
@@ -1194,6 +1377,7 @@ export default function ColorShopDashboard() {
             {orcamentos.map((o) => (
               <tr key={o.id} className="border-b border-gray-50">
                 <td className="px-5 py-3 font-medium text-gray-900 align-top">{o.clienteNome || "Sem nome"}</td>
+                <td className="px-5 py-3 text-gray-600 align-top">{o.vendedor || "—"}</td>
                 <td className="px-5 py-3 text-gray-600">
                   {o.itens.map((l, idx) => (
                     <div key={idx} className={idx > 0 ? "mt-1" : ""}>{l.nome} × {l.qtd}</div>
@@ -1210,6 +1394,9 @@ export default function ColorShopDashboard() {
                 </td>
                 <td className="px-5 py-3 align-top">
                   <div className="flex items-center gap-3">
+                    <button onClick={() => imprimirOrcamento(o)} className="text-gray-400 hover:text-emerald-700" title="Imprimir / PDF">
+                      <Printer size={15} />
+                    </button>
                     <button onClick={() => copiarOrcamento(o)} className="text-gray-400 hover:text-emerald-700" title="Copiar texto">
                       <Copy size={15} />
                     </button>
@@ -1224,7 +1411,7 @@ export default function ColorShopDashboard() {
               </tr>
             ))}
             {orcamentos.length === 0 && (
-              <tr><td colSpan={6} className="py-8 text-center text-gray-400 text-sm">Nenhum orçamento criado ainda.</td></tr>
+              <tr><td colSpan={7} className="py-8 text-center text-gray-400 text-sm">Nenhum orçamento criado ainda.</td></tr>
             )}
           </tbody>
         </table>
@@ -1478,9 +1665,12 @@ export default function ColorShopDashboard() {
     const [precoUnit, setPrecoUnit] = useState(precoPadrao);
     useEffect(() => { setPrecoUnit(precoPadrao); }, [itemId, tipoVenda]);
     const total = carrinho.reduce((s, l) => s + l.precoUnit * l.qtd, 0);
+    const custoRef = item ? (isAdmin ? item.custo : (item.custoVendedor ?? item.custo)) : 0;
+    const abaixoDoCusto = item && precoUnit < custoRef;
 
     function addAoCarrinho() {
       if (!item || qtd < 1) return;
+      if (abaixoDoCusto) return;
       setCarrinho((c) => [...c, { key: uid(), nome: item.nome, qtd, tipoVenda, precoUnit }]);
       setQtd(1);
     }
@@ -1489,10 +1679,17 @@ export default function ColorShopDashboard() {
     }
     function finalizar() {
       if (carrinho.length === 0) return;
+      for (const l of carrinho) {
+        const ref = estoque.find((i) => i.nome === l.nome);
+        if (ref) {
+          const custoCheck = isAdmin ? ref.custo : (ref.custoVendedor ?? ref.custo);
+          if (l.precoUnit < custoCheck) return;
+        }
+      }
       const cliente = clientes.find((c) => c.id === clienteId);
       const clienteNome = cliente ? cliente.nome : clienteNomeLivre.trim();
       setOrcamentos((os) => [
-        { id: uid(), clienteId: clienteId || null, clienteNome, itens: carrinho.map(({ key, ...rest }) => rest), total, data: todayISO() },
+        { id: uid(), clienteId: clienteId || null, clienteNome, vendedor: authUser?.nome || null, itens: carrinho.map(({ key, ...rest }) => rest), total, data: todayISO() },
         ...os,
       ]);
       setModal(null);
@@ -1563,16 +1760,19 @@ export default function ColorShopDashboard() {
                 type="number"
                 step="0.01"
                 min="0"
-                className={inputCls}
+                className={`${inputCls} ${abaixoDoCusto ? "border-red-400 focus:ring-red-500" : ""}`}
                 value={precoUnit}
                 onChange={(e) => setPrecoUnit(Number(e.target.value))}
               />
             </Field>
           </div>
+          {abaixoDoCusto && (
+            <div className="text-xs text-red-600 -mt-1 mb-2">Esse valor está abaixo do custo ({fmtUSD(custoRef)}). Não é possível enviar orçamento com preço abaixo do custo.</div>
+          )}
           <button
             type="button"
             onClick={addAoCarrinho}
-            disabled={!item || qtd < 1}
+            disabled={!item || qtd < 1 || abaixoDoCusto}
             className="w-full flex items-center justify-center gap-1.5 border border-emerald-800 text-emerald-800 hover:bg-emerald-50 disabled:opacity-40 rounded-md py-2 text-sm font-medium"
           >
             <Plus size={14} /> Adicionar ao orçamento
@@ -2178,6 +2378,7 @@ export default function ColorShopDashboard() {
     visao: <VisaoGeral />,
     estoque: <EstoquePage />,
     vendas: <VendasPage />,
+    comissoes: <ComissoesPage />,
     orcamentos: <OrcamentosPage />,
     compras: <ComprasPage />,
     caixa: <CaixaPage />,
