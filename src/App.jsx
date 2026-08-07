@@ -225,6 +225,7 @@ export default function ColorShopDashboard() {
 
   const [modal, setModal] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
+  const [editingVenda, setEditingVenda] = useState(null);
   const [editingConta, setEditingConta] = useState(null);
   const [payingConta, setPayingConta] = useState(null);
   const [receivingVenda, setReceivingVenda] = useState(null);
@@ -335,13 +336,17 @@ export default function ColorShopDashboard() {
   const visibleNav = NAV.filter((n) => !authUser || n.roles.includes(authUser.papel));
 
   // ---- derived values ----
+  const vendasVisiveis = useMemo(
+    () => (isAdmin ? vendas : vendas.filter((v) => v.vendedor === authUser?.nome)),
+    [vendas, isAdmin, authUser]
+  );
   const vendasHoje = useMemo(
-    () => vendas.filter((v) => v.data === todayISO()).reduce((s, v) => s + v.valor, 0),
-    [vendas]
+    () => vendasVisiveis.filter((v) => v.data === todayISO()).reduce((s, v) => s + v.valor, 0),
+    [vendasVisiveis]
   );
   const aReceber = useMemo(
-    () => vendas.filter((v) => v.status === "Pendente").reduce((s, v) => s + v.valor, 0),
-    [vendas]
+    () => vendasVisiveis.filter((v) => v.status === "Pendente").reduce((s, v) => s + v.valor, 0),
+    [vendasVisiveis]
   );
   const valorEstoque = useMemo(() => estoque.reduce((s, i) => s + i.qtd * i.custo, 0), [estoque]);
   const unidadesEstoque = useMemo(() => estoque.reduce((s, i) => s + i.qtd, 0), [estoque]);
@@ -399,6 +404,57 @@ export default function ColorShopDashboard() {
     setModal(null);
   }
 
+  function editarVenda(id, { clienteId, itens, pagamento, condicao, vencimento }) {
+    if (!isAdmin) return;
+    const original = vendas.find((v) => v.id === id);
+    if (!original || !itens || itens.length === 0) return;
+    const oldQtdPorItem = {};
+    (original.itens || []).forEach((l) => { oldQtdPorItem[l.itemId] = (oldQtdPorItem[l.itemId] || 0) + l.qtd; });
+    const estoqueRestaurado = estoque.map((i) => (oldQtdPorItem[i.id] ? { ...i, qtd: i.qtd + oldQtdPorItem[i.id] } : i));
+    const qtdPorItem = {};
+    itens.forEach((l) => { qtdPorItem[l.itemId] = (qtdPorItem[l.itemId] || 0) + l.qtd; });
+    for (const itemId in qtdPorItem) {
+      const stockItem = estoqueRestaurado.find((i) => i.id === itemId);
+      if (!stockItem || qtdPorItem[itemId] > stockItem.qtd) return;
+    }
+    const cliente = clientes.find((c) => c.id === clienteId);
+    const linhas = itens.map((l) => {
+      const item = estoqueRestaurado.find((i) => i.id === l.itemId);
+      const precoUnit = l.precoUnit != null ? l.precoUnit : (l.tipoVenda === "Atacado" ? item.atacado : item.varejo);
+      return { itemId: l.itemId, itemNome: item.nome, marca: item.marca || "", qtd: l.qtd, tipoVenda: l.tipoVenda, precoUnit, subtotal: precoUnit * l.qtd };
+    });
+    const valor = linhas.reduce((s, l) => s + l.subtotal, 0);
+    setEstoque(estoqueRestaurado.map((i) => (qtdPorItem[i.id] ? { ...i, qtd: i.qtd - qtdPorItem[i.id] } : i)));
+    if (original.condicao === "À vista") {
+      const oldKey = original.pagamento === "USDT" ? "usdt" : original.pagamento === "Dólar" ? "dolar" : original.pagamento === "PIX" ? "pix" : "real";
+      addMovimento(oldKey, "Saída", original.valor, `Estorno por edição da venda #${id}`);
+    }
+    if (condicao === "À vista") {
+      const newKey = pagamento === "USDT" ? "usdt" : pagamento === "Dólar" ? "dolar" : pagamento === "PIX" ? "pix" : "real";
+      addMovimento(newKey, "Entrada", valor, `Venda #${id} (editada)`);
+    }
+    setVendas((vs) =>
+      vs.map((v) =>
+        v.id === id
+          ? {
+              ...v,
+              clienteId,
+              clienteNome: cliente ? cliente.nome : "Sem nome",
+              itens: linhas,
+              valor,
+              pagamento,
+              condicao,
+              vencimento: condicao === "A prazo" ? vencimento : null,
+              status: condicao === "À vista" ? "Pago" : v.status === "Pago" ? "Pago" : "Pendente",
+              editadoPor: authUser?.nome || null,
+            }
+          : v
+      )
+    );
+    setModal(null);
+    setEditingVenda(null);
+  }
+
   function registrarCompra({ fornecedorId, itens, pagamento, condicao, vencimento }) {
     if (!itens || itens.length === 0) return;
     const fornecedor = fornecedores.find((f) => f.id === fornecedorId);
@@ -440,7 +496,7 @@ export default function ColorShopDashboard() {
     () => contasPendentes.filter((c) => c.vencimento <= todayISO()).sort((a, b) => a.vencimento.localeCompare(b.vencimento)),
     [contasPendentes]
   );
-  const vendasACobrar = useMemo(() => vendas.filter((v) => v.status === "Pendente").sort((a, b) => a.data.localeCompare(b.data)), [vendas]);
+  const vendasACobrar = useMemo(() => vendasVisiveis.filter((v) => v.status === "Pendente").sort((a, b) => a.data.localeCompare(b.data)), [vendasVisiveis]);
 
   function pagarConta(id, caixaKey) {
     const conta = contas.find((c) => c.id === id);
@@ -766,7 +822,7 @@ export default function ColorShopDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {vendas.slice(0, 5).map((v) => (
+                {vendasVisiveis.slice(0, 5).map((v) => (
                   <tr key={v.id} className="border-b border-gray-50">
                     <td className="py-3">
                       <div className="font-medium text-gray-900">#{v.id}</div>
@@ -782,7 +838,7 @@ export default function ColorShopDashboard() {
                     <td className="py-3"><Badge status={v.status} /></td>
                   </tr>
                 ))}
-                {vendas.length === 0 && (
+                {vendasVisiveis.length === 0 && (
                   <tr><td colSpan={7} className="py-6 text-center text-gray-400 text-sm">Nenhuma venda registrada.</td></tr>
                 )}
               </tbody>
@@ -968,9 +1024,9 @@ export default function ColorShopDashboard() {
     return (
       <TableShell
         title="Vendas"
-        sub={`${vendas.length} registros`}
+        sub={`${vendasVisiveis.length} registros`}
         action={
-          <button onClick={() => setModal("venda")} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
+          <button onClick={() => { setEditingVenda(null); setModal("venda"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
             <Plus size={14} /> Nova venda
           </button>
         }
@@ -980,6 +1036,7 @@ export default function ColorShopDashboard() {
             <tr className="text-left text-[11px] tracking-wide text-gray-400 border-b border-gray-100">
               <th className="px-5 py-2 font-medium">VENDA</th>
               <th className="px-5 py-2 font-medium">CLIENTE</th>
+              {isAdmin && <th className="px-5 py-2 font-medium">VENDEDOR</th>}
               <th className="px-5 py-2 font-medium">ITENS</th>
               <th className="px-5 py-2 font-medium">VALOR</th>
               <th className="px-5 py-2 font-medium">PAGAMENTO</th>
@@ -989,10 +1046,14 @@ export default function ColorShopDashboard() {
             </tr>
           </thead>
           <tbody>
-            {vendas.map((v) => (
+            {vendasVisiveis.map((v) => (
               <tr key={v.id} className="border-b border-gray-50">
-                <td className="px-5 py-3 font-medium text-gray-900 align-top">#{v.id}</td>
+                <td className="px-5 py-3 font-medium text-gray-900 align-top">
+                  #{v.id}
+                  {v.editadoPor && <div className="text-[10px] font-normal text-amber-600 mt-0.5">editada</div>}
+                </td>
                 <td className="px-5 py-3 text-gray-600 align-top">{v.clienteNome}</td>
+                {isAdmin && <td className="px-5 py-3 text-gray-600 align-top">{v.vendedor || "—"}</td>}
                 <td className="px-5 py-3 text-gray-600">
                   {(v.itens || []).map((l, idx) => (
                     <div key={idx} className={idx > 0 ? "mt-1" : ""}>
@@ -1009,6 +1070,11 @@ export default function ColorShopDashboard() {
                 <td className="px-5 py-3 align-top"><Badge status={v.status} /></td>
                 <td className="px-5 py-3 align-top">
                   <div className="flex items-center gap-3">
+                    {isAdmin && (
+                      <button onClick={() => { setEditingVenda(v); setModal("venda"); }} className="text-gray-400 hover:text-emerald-700" title="Editar venda">
+                        <Pencil size={15} />
+                      </button>
+                    )}
                     <button onClick={() => imprimirVenda(v)} className="text-gray-400 hover:text-emerald-700" title="Imprimir nota">
                       <Printer size={15} />
                     </button>
@@ -1019,8 +1085,8 @@ export default function ColorShopDashboard() {
                 </td>
               </tr>
             ))}
-            {vendas.length === 0 && (
-              <tr><td colSpan={8} className="py-8 text-center text-gray-400 text-sm">Nenhuma venda registrada.</td></tr>
+            {vendasVisiveis.length === 0 && (
+              <tr><td colSpan={isAdmin ? 9 : 8} className="py-8 text-center text-gray-400 text-sm">Nenhuma venda registrada.</td></tr>
             )}
           </tbody>
         </table>
@@ -1567,24 +1633,38 @@ export default function ColorShopDashboard() {
   // ---------- MODALS ----------
 
   function VendaModal() {
+    const isEdit = !!editingVenda;
     const clientesVisiveis = isAdmin ? clientes : clientes.filter((c) => c.criadoPor === authUser?.nome);
-    const [clienteId, setClienteId] = useState(clientesVisiveis[0]?.id || "");
+    const [clienteId, setClienteId] = useState(editingVenda?.clienteId || clientesVisiveis[0]?.id || "");
     const [filtroMarca, setFiltroMarca] = useState("");
     const [filtroTipo, setFiltroTipo] = useState("");
-    const marcas = useMemo(() => Array.from(new Set(estoque.map((i) => i.marca).filter(Boolean))).sort(), [estoque]);
-    const tipos = useMemo(() => Array.from(new Set(estoque.map((i) => i.tipo).filter(Boolean))).sort(), [estoque]);
-    const itensFiltrados = estoque.filter(
+
+    const estoqueBase = useMemo(() => {
+      if (!isEdit) return estoque;
+      const oldQtdPorItem = {};
+      (editingVenda.itens || []).forEach((l) => { oldQtdPorItem[l.itemId] = (oldQtdPorItem[l.itemId] || 0) + l.qtd; });
+      return estoque.map((i) => (oldQtdPorItem[i.id] ? { ...i, qtd: i.qtd + oldQtdPorItem[i.id] } : i));
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [estoque]);
+
+    const marcas = useMemo(() => Array.from(new Set(estoqueBase.map((i) => i.marca).filter(Boolean))).sort(), [estoqueBase]);
+    const tipos = useMemo(() => Array.from(new Set(estoqueBase.map((i) => i.tipo).filter(Boolean))).sort(), [estoqueBase]);
+    const itensFiltrados = estoqueBase.filter(
       (i) => (filtroMarca === "" || i.marca === filtroMarca) && (filtroTipo === "" || i.tipo === filtroTipo)
     );
-    const [itemId, setItemId] = useState(estoque[0]?.id || "");
+    const [itemId, setItemId] = useState(estoqueBase[0]?.id || "");
     const [qtd, setQtd] = useState(1);
     const [tipoVenda, setTipoVenda] = useState("Varejo");
-    const [pagamento, setPagamento] = useState("PIX");
-    const [condicao, setCondicao] = useState("À vista");
-    const [vencimento, setVencimento] = useState(todayISO());
-    const [carrinho, setCarrinho] = useState([]);
+    const [pagamento, setPagamento] = useState(editingVenda?.pagamento || "PIX");
+    const [condicao, setCondicao] = useState(editingVenda?.condicao || "À vista");
+    const [vencimento, setVencimento] = useState(editingVenda?.vencimento || todayISO());
+    const [carrinho, setCarrinho] = useState(
+      isEdit
+        ? (editingVenda.itens || []).map((l) => ({ key: uid(), itemId: l.itemId, nome: l.itemNome, qtd: l.qtd, tipoVenda: l.tipoVenda, precoUnit: l.precoUnit }))
+        : []
+    );
 
-    const item = estoque.find((i) => i.id === itemId) || itensFiltrados[0];
+    const item = estoqueBase.find((i) => i.id === itemId) || itensFiltrados[0];
     const jaNoCarrinho = carrinho.filter((l) => l.itemId === itemId).reduce((s, l) => s + l.qtd, 0);
     const disponivel = item ? item.qtd - jaNoCarrinho : 0;
     const precoPadrao = item ? (tipoVenda === "Atacado" ? item.atacado : item.varejo) : 0;
@@ -1594,6 +1674,11 @@ export default function ColorShopDashboard() {
 
     const custoRef = item ? (isAdmin ? item.custo : (item.custoVendedor ?? item.custo)) : 0;
     const abaixoDoCusto = !isAdmin && item && precoUnit < custoRef;
+
+    function fecharModal() {
+      setModal(null);
+      setEditingVenda(null);
+    }
 
     function addAoCarrinho() {
       if (!item || qtd < 1 || qtd > disponivel || precoUnit < 0) return;
@@ -1606,17 +1691,19 @@ export default function ColorShopDashboard() {
     }
     function finalizar() {
       if (carrinho.length === 0) return;
-      registrarVenda({
+      const payload = {
         clienteId,
         itens: carrinho.map((l) => ({ itemId: l.itemId, qtd: l.qtd, tipoVenda: l.tipoVenda, precoUnit: l.precoUnit })),
         pagamento,
         condicao,
         vencimento,
-      });
+      };
+      if (isEdit) editarVenda(editingVenda.id, payload);
+      else registrarVenda(payload);
     }
 
     return (
-      <Modal title="Nova venda" onClose={() => setModal(null)} wide>
+      <Modal title={isEdit ? `Editar venda #${editingVenda.id}` : "Nova venda"} onClose={fecharModal} wide>
         <Field label="Cliente">
           <select className={inputCls} value={clienteId} onChange={(e) => setClienteId(e.target.value)}>
             <option value="">Sem nome</option>
@@ -1750,7 +1837,7 @@ export default function ColorShopDashboard() {
           disabled={carrinho.length === 0}
           className="w-full bg-emerald-800 hover:bg-emerald-900 disabled:opacity-40 text-white rounded-md py-2 text-sm font-medium"
         >
-          Finalizar venda
+          {isEdit ? "Salvar alterações" : "Finalizar venda"}
         </button>
       </Modal>
     );
@@ -2657,7 +2744,7 @@ export default function ColorShopDashboard() {
                   <Download size={14} /> <span className="hidden sm:inline">Backup</span>
                 </button>
               )}
-              <button onClick={() => setModal("venda")} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-2">
+              <button onClick={() => { setEditingVenda(null); setModal("venda"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-2">
                 <Plus size={14} /> Nova venda
               </button>
             </div>
