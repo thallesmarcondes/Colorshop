@@ -1679,7 +1679,7 @@ export default function ColorShopDashboard() {
   }
 
   function gerarTextoOrcamento(orc) {
-    const linhas = orc.itens.map((l) => `• ${l.nome}${l.marca ? ` (${l.marca})` : ""} x${l.qtd} — ${fmtUSD(l.precoUnit * l.qtd)}`).join("\n");
+    const linhas = orc.itens.map((l) => `• ${l.nome}${l.marca ? ` (${l.marca})` : ""} ×${l.qtd} - ${fmtUSD(l.precoUnit * l.qtd)}`).join("\n");
     return [
       "*INDUFARMA — DISTRIBUIDORA*",
       "_Orçamento comercial_",
