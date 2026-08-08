@@ -3,7 +3,7 @@ import {
   LayoutGrid, ArrowUpRight, ArrowDownLeft, Wallet, Users, Truck,
   RefreshCw, Plus, X, Trash2, Search, Download, Home, Loader2, Pencil, Receipt, Check, Copy,
   Lock, UserCog, LogOut, FileText, Printer, MessageCircle, Eye, EyeOff,
-  Menu, Image as ImageIcon, Camera, TrendingUp, Award, List
+  Menu, Image as ImageIcon, Camera, TrendingUp, Award, List, ArrowRight, CheckCircle2
 } from "lucide-react";
 import { supabase } from "./supabaseConfig";
 
@@ -227,6 +227,9 @@ export default function ColorShopDashboard() {
   const [editingItem, setEditingItem] = useState(null);
   const [editingVenda, setEditingVenda] = useState(null);
   const [editingCompra, setEditingCompra] = useState(null);
+  const [viewingCliente, setViewingCliente] = useState(null);
+  const [viewingLoja, setViewingLoja] = useState(null);
+  const [convertendoOrcamento, setConvertendoOrcamento] = useState(null);
   const [editingConta, setEditingConta] = useState(null);
   const [payingConta, setPayingConta] = useState(null);
   const [receivingVenda, setReceivingVenda] = useState(null);
@@ -366,7 +369,7 @@ export default function ColorShopDashboard() {
     setMovimentos((m) => [{ id: uid(), caixa: caixaKey, tipo, valor, descricao, data: todayISO() }, ...m]);
   }
 
-  function registrarVenda({ clienteId, itens, pagamento, condicao, vencimento, vendedorNome }) {
+  function registrarVenda({ clienteId, itens, pagamento, condicao, vencimento, vendedorNome, origemOrcamentoId }) {
     if (!itens || itens.length === 0) return;
     // validate stock per item (aggregate qty per itemId in case of duplicates)
     const qtdPorItem = {};
@@ -402,7 +405,11 @@ export default function ColorShopDashboard() {
       const key = pagamento === "USDT" ? "usdt" : pagamento === "Dólar" ? "dolar" : pagamento === "PIX" ? "pix" : "real";
       addMovimento(key, "Entrada", valor, `Venda #${id}`);
     }
+    if (origemOrcamentoId) {
+      setOrcamentos((os) => os.map((o) => (o.id === origemOrcamentoId ? { ...o, convertidoEm: id } : o)));
+    }
     setModal(null);
+    setConvertendoOrcamento(null);
   }
 
   function editarVenda(id, { clienteId, itens, pagamento, condicao, vencimento, vendedorNome }) {
@@ -697,6 +704,77 @@ export default function ColorShopDashboard() {
     const fone = cliente?.contato ? cliente.contato.replace(/[^\d]/g, "") : "";
     const url = fone ? `https://wa.me/${fone}?text=${encodeURIComponent(texto)}` : `https://wa.me/?text=${encodeURIComponent(texto)}`;
     window.open(url, "_blank");
+  }
+
+  function imprimirNotasEmLote(vendasLote, tituloGrupo) {
+    if (!vendasLote || vendasLote.length === 0) return;
+    const blocos = vendasLote
+      .map((v) => {
+        const linhas = (v.itens || [])
+          .map(
+            (l) => `
+            <tr>
+              <td style="padding:4px 0;">${l.itemNome}${l.marca ? `<div style="font-size:10px;color:#6b7280;">Marca: ${l.marca}</div>` : ""}</td>
+              <td style="padding:4px 0;text-align:center;">${l.qtd}</td>
+              <td style="padding:4px 0;text-align:right;">${fmtUSD(l.precoUnit)}</td>
+              <td style="padding:4px 0;text-align:right;">${fmtUSD(l.subtotal)}</td>
+            </tr>`
+          )
+          .join("");
+        return `
+        <div class="nota">
+          <div class="nota-head">
+            <div><strong>Venda #${v.id}</strong> · ${fmtDate(v.data)}</div>
+            <div>${v.status}</div>
+          </div>
+          <div class="row"><span>Cliente</span><span>${v.clienteNome}</span></div>
+          <div class="row"><span>Vendedor</span><span>${v.vendedor || "—"}</span></div>
+          ${v.vencimento ? `<div class="row"><span>Vencimento</span><span>${fmtDate(v.vencimento)}</span></div>` : ""}
+          <table>
+            <thead><tr><th>Item</th><th style="text-align:center;">Qtd</th><th style="text-align:right;">Unit.</th><th style="text-align:right;">Subtotal</th></tr></thead>
+            <tbody>${linhas}</tbody>
+          </table>
+          <div class="nota-total"><span>Total</span><span>${fmtUSD(v.valor)}</span></div>
+        </div>`;
+      })
+      .join("");
+    const totalGeral = vendasLote.reduce((s, v) => s + v.valor, 0);
+    const html = `
+      <html>
+      <head>
+        <title>Notas — ${tituloGrupo}</title>
+        <meta charset="utf-8" />
+        <style>
+          body { font-family: -apple-system, Arial, sans-serif; color: #111827; padding: 24px; max-width: 480px; margin: 0 auto; }
+          .header { text-align: center; margin-bottom: 18px; }
+          .brand-name { font-size: 16px; font-weight: 700; color: #065f46; }
+          .subtitle { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.03em; margin-top: 2px; }
+          .nota { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; page-break-inside: avoid; }
+          .nota-head { display: flex; justify-content: space-between; font-size: 12px; color: #6b7280; margin-bottom: 6px; border-bottom: 1px dashed #d1d5db; padding-bottom: 6px; }
+          .row { display: flex; justify-content: space-between; font-size: 12.5px; padding: 1px 0; color: #374151; }
+          table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12px; }
+          thead th { text-align: left; border-bottom: 1px solid #111827; padding-bottom: 4px; font-size: 9.5px; text-transform: uppercase; color: #6b7280; }
+          .nota-total { display: flex; justify-content: space-between; font-weight: 700; font-size: 13px; margin-top: 6px; border-top: 1px solid #111827; padding-top: 4px; color: #065f46; }
+          .total-geral { display: flex; justify-content: space-between; font-weight: 700; font-size: 16px; margin-top: 10px; border-top: 2px solid #111827; padding-top: 10px; color: #065f46; }
+          .footer { margin-top: 18px; text-align: center; font-size: 10.5px; color: #9ca3af; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="brand-name">DISTRIBUIDORA INDUFARMA</div>
+          <div class="subtitle">Notas a prazo pendentes — ${tituloGrupo}</div>
+        </div>
+        ${blocos}
+        <div class="total-geral"><span>Total geral</span><span>${fmtUSD(totalGeral)}</span></div>
+        <div class="footer">Estas notas não têm valor fiscal.<br/>Distribuidora Indufarma</div>
+      </body>
+      </html>`;
+    const win = window.open("", "_blank", "width=480,height=680");
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 300);
   }
 
   function gerarTextoListaAtacado() {
@@ -1138,7 +1216,7 @@ export default function ColorShopDashboard() {
         title="Vendas"
         sub={`${vendasVisiveis.length} registros`}
         action={
-          <button onClick={() => { setEditingVenda(null); setModal("venda"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
+          <button onClick={() => { setEditingVenda(null); setConvertendoOrcamento(null); setModal("venda"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
             <Plus size={14} /> Nova venda
           </button>
         }
@@ -1183,7 +1261,7 @@ export default function ColorShopDashboard() {
                 <td className="px-5 py-3 align-top">
                   <div className="flex items-center gap-3">
                     {isAdmin && (
-                      <button onClick={() => { setEditingVenda(v); setModal("venda"); }} className="text-gray-400 hover:text-emerald-700" title="Editar venda">
+                      <button onClick={() => { setEditingVenda(v); setConvertendoOrcamento(null); setModal("venda"); }} className="text-gray-400 hover:text-emerald-700" title="Editar venda">
                         <Pencil size={15} />
                       </button>
                     )}
@@ -1418,12 +1496,22 @@ export default function ColorShopDashboard() {
   function PessoasPage({ title, data, setData, placeholder }) {
     const isClientes = title === "Clientes";
     const showContato = isAdmin || isClientes;
+    const [filtroLoja, setFiltroLoja] = useState("");
+    const lojas = isClientes ? Array.from(new Set(data.map((p) => p.loja).filter(Boolean))).sort() : [];
+    const dataFiltrada = isClientes && filtroLoja ? data.filter((p) => p.loja === filtroLoja) : data;
+
     return (
       <TableShell
         title={title}
-        sub={`${data.length} cadastros`}
+        sub={`${dataFiltrada.length} de ${data.length} cadastros`}
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {isClientes && lojas.length > 0 && (
+              <select value={filtroLoja} onChange={(e) => setFiltroLoja(e.target.value)} className="text-sm border border-gray-200 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-700 text-gray-700">
+                <option value="">Todas as lojas</option>
+                {lojas.map((l) => <option key={l} value={l}>{l}</option>)}
+              </select>
+            )}
             {isClientes && (
               <button onClick={() => abrirWhatsappListaAtacado()} className="flex items-center gap-1.5 text-sm font-medium border border-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-50">
                 <List size={14} /> Enviar lista de atacado
@@ -1439,19 +1527,31 @@ export default function ColorShopDashboard() {
           <thead>
             <tr className="text-left text-[11px] tracking-wide text-gray-400 border-b border-gray-100">
               <th className="px-5 py-2 font-medium">NOME</th>
+              {isClientes && <th className="px-5 py-2 font-medium">LOJA</th>}
               {showContato && <th className="px-5 py-2 font-medium">CONTATO</th>}
               {isClientes && isAdmin && <th className="px-5 py-2 font-medium">CADASTRADO POR</th>}
               <th className="px-5 py-2 font-medium">AÇÕES</th>
             </tr>
           </thead>
           <tbody>
-            {data.map((p) => (
+            {dataFiltrada.map((p) => (
               <tr key={p.id} className="border-b border-gray-50">
                 <td className="px-5 py-3 font-medium text-gray-900">{p.nome}</td>
+                {isClientes && <td className="px-5 py-3 text-gray-600">{p.loja || "—"}</td>}
                 {showContato && <td className="px-5 py-3 text-gray-600">{p.contato || "—"}</td>}
                 {isClientes && isAdmin && <td className="px-5 py-3 text-gray-600">{p.criadoPor || "—"}</td>}
                 <td className="px-5 py-3">
                   <div className="flex items-center gap-3">
+                    {isClientes && (
+                      <button onClick={() => setViewingCliente(p)} className="text-gray-400 hover:text-emerald-700" title="Ver compras deste cliente">
+                        <FileText size={15} />
+                      </button>
+                    )}
+                    {isClientes && isAdmin && p.loja && (
+                      <button onClick={() => setViewingLoja(p.loja)} className="text-gray-400 hover:text-emerald-700" title={`Ver compras da loja ${p.loja}`}>
+                        <Award size={15} />
+                      </button>
+                    )}
                     {isClientes && p.contato && (
                       <>
                         <button onClick={() => abrirWhatsappContato(p)} className="text-gray-400 hover:text-emerald-700" title="Enviar mensagem no WhatsApp">
@@ -1473,8 +1573,8 @@ export default function ColorShopDashboard() {
                 </td>
               </tr>
             ))}
-            {data.length === 0 && (
-              <tr><td colSpan={showContato ? (isClientes && isAdmin ? 4 : 3) : 2} className="py-8 text-center text-gray-400 text-sm">{placeholder}</td></tr>
+            {dataFiltrada.length === 0 && (
+              <tr><td colSpan={1 + (isClientes ? 1 : 0) + (showContato ? 1 : 0) + (isClientes && isAdmin ? 1 : 0) + 1} className="py-8 text-center text-gray-400 text-sm">{placeholder}</td></tr>
             )}
           </tbody>
         </table>
@@ -1679,7 +1779,14 @@ export default function ColorShopDashboard() {
           <tbody>
             {orcamentos.map((o) => (
               <tr key={o.id} className="border-b border-gray-50">
-                <td className="px-5 py-3 font-medium text-gray-900 align-top">{o.clienteNome || "Sem nome"}</td>
+                <td className="px-5 py-3 font-medium text-gray-900 align-top">
+                  {o.clienteNome || "Sem nome"}
+                  {o.convertidoEm && (
+                    <div className="text-[10px] font-normal text-emerald-700 mt-0.5 flex items-center gap-1">
+                      <CheckCircle2 size={11} /> venda #{o.convertidoEm}
+                    </div>
+                  )}
+                </td>
                 <td className="px-5 py-3 text-gray-600 align-top">{o.vendedor || "—"}</td>
                 <td className="px-5 py-3 text-gray-600">
                   {o.itens.map((l, idx) => (
@@ -1697,6 +1804,15 @@ export default function ColorShopDashboard() {
                 </td>
                 <td className="px-5 py-3 align-top">
                   <div className="flex items-center gap-3">
+                    {!o.convertidoEm && (
+                      <button
+                        onClick={() => { setConvertendoOrcamento(o); setEditingVenda(null); setModal("venda"); }}
+                        className="text-gray-400 hover:text-emerald-700"
+                        title="Cliente confirmou — converter em venda"
+                      >
+                        <ArrowRight size={15} />
+                      </button>
+                    )}
                     <button onClick={() => imprimirOrcamento(o)} className="text-gray-400 hover:text-emerald-700" title="Imprimir / PDF">
                       <Printer size={15} />
                     </button>
@@ -1761,12 +1877,14 @@ export default function ColorShopDashboard() {
 
   function VendaModal() {
     const isEdit = !!editingVenda;
+    const isConvertendo = !isEdit && !!convertendoOrcamento;
     const clientesVisiveis = isAdmin ? clientes : clientes.filter((c) => c.criadoPor === authUser?.nome);
-    const [clienteId, setClienteId] = useState(editingVenda?.clienteId || clientesVisiveis[0]?.id || "");
-    const [vendedorNome, setVendedorNome] = useState(editingVenda?.vendedor || authUser?.nome || "");
+    const [clienteId, setClienteId] = useState(editingVenda?.clienteId || convertendoOrcamento?.clienteId || clientesVisiveis[0]?.id || "");
+    const [vendedorNome, setVendedorNome] = useState(editingVenda?.vendedor || convertendoOrcamento?.vendedor || authUser?.nome || "");
     const vendedoresDisponiveis = usuarios.filter((u) => u.papel === "vendedor" || u.papel === "admin");
     const [filtroMarca, setFiltroMarca] = useState("");
     const [filtroTipo, setFiltroTipo] = useState("");
+    const [buscaProduto, setBuscaProduto] = useState("");
 
     const estoqueBase = useMemo(() => {
       if (!isEdit) return estoque;
@@ -1779,7 +1897,10 @@ export default function ColorShopDashboard() {
     const marcas = useMemo(() => Array.from(new Set(estoqueBase.map((i) => i.marca).filter(Boolean))).sort(), [estoqueBase]);
     const tipos = useMemo(() => Array.from(new Set(estoqueBase.map((i) => i.tipo).filter(Boolean))).sort(), [estoqueBase]);
     const itensFiltrados = estoqueBase.filter(
-      (i) => (filtroMarca === "" || i.marca === filtroMarca) && (filtroTipo === "" || i.tipo === filtroTipo)
+      (i) =>
+        (filtroMarca === "" || i.marca === filtroMarca) &&
+        (filtroTipo === "" || i.tipo === filtroTipo) &&
+        (buscaProduto.trim() === "" || i.nome.toLowerCase().includes(buscaProduto.trim().toLowerCase()))
     );
     const [itemId, setItemId] = useState(estoqueBase[0]?.id || "");
     const [qtd, setQtd] = useState(1);
@@ -1787,11 +1908,27 @@ export default function ColorShopDashboard() {
     const [pagamento, setPagamento] = useState(editingVenda?.pagamento || "PIX");
     const [condicao, setCondicao] = useState(editingVenda?.condicao || "À vista");
     const [vencimento, setVencimento] = useState(editingVenda?.vencimento || todayISO());
-    const [carrinho, setCarrinho] = useState(
-      isEdit
-        ? (editingVenda.itens || []).map((l) => ({ key: uid(), itemId: l.itemId, nome: l.itemNome, qtd: l.qtd, tipoVenda: l.tipoVenda, precoUnit: l.precoUnit }))
-        : []
-    );
+    const [itensNaoEncontrados] = useState(() => {
+      if (!isConvertendo) return [];
+      return (convertendoOrcamento.itens || []).filter(
+        (l) => !estoqueBase.some((i) => i.nome.toLowerCase() === l.nome.toLowerCase())
+      );
+    });
+    const [carrinho, setCarrinho] = useState(() => {
+      if (isEdit) {
+        return (editingVenda.itens || []).map((l) => ({ key: uid(), itemId: l.itemId, nome: l.itemNome, qtd: l.qtd, tipoVenda: l.tipoVenda, precoUnit: l.precoUnit }));
+      }
+      if (isConvertendo) {
+        return (convertendoOrcamento.itens || [])
+          .map((l) => {
+            const match = estoqueBase.find((i) => i.nome.toLowerCase() === l.nome.toLowerCase());
+            if (!match) return null;
+            return { key: uid(), itemId: match.id, nome: match.nome, qtd: l.qtd, tipoVenda: l.tipoVenda, precoUnit: l.precoUnit };
+          })
+          .filter(Boolean);
+      }
+      return [];
+    });
 
     const item = estoqueBase.find((i) => i.id === itemId) || itensFiltrados[0];
     const jaNoCarrinho = carrinho.filter((l) => l.itemId === itemId).reduce((s, l) => s + l.qtd, 0);
@@ -1807,6 +1944,7 @@ export default function ColorShopDashboard() {
     function fecharModal() {
       setModal(null);
       setEditingVenda(null);
+      setConvertendoOrcamento(null);
     }
 
     function addAoCarrinho() {
@@ -1827,13 +1965,24 @@ export default function ColorShopDashboard() {
         condicao,
         vencimento,
         vendedorNome,
+        origemOrcamentoId: convertendoOrcamento?.id,
       };
       if (isEdit) editarVenda(editingVenda.id, payload);
       else registrarVenda(payload);
     }
 
     return (
-      <Modal title={isEdit ? `Editar venda #${editingVenda.id}` : "Nova venda"} onClose={fecharModal} wide>
+      <Modal title={isEdit ? `Editar venda #${editingVenda.id}` : isConvertendo ? "Confirmar venda (do orçamento)" : "Nova venda"} onClose={fecharModal} wide>
+        {isConvertendo && (
+          <div className="mb-4 text-xs bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-md px-3 py-2">
+            Carrinho preenchido a partir do orçamento de {convertendoOrcamento.clienteNome || "cliente sem nome"}. Confira os itens, ajuste se precisar e finalize a venda.
+            {itensNaoEncontrados.length > 0 && (
+              <div className="mt-1 text-amber-700">
+                {itensNaoEncontrados.length === 1 ? "1 item" : `${itensNaoEncontrados.length} itens`} do orçamento não {itensNaoEncontrados.length === 1 ? "foi encontrado" : "foram encontrados"} no estoque e precisa{itensNaoEncontrados.length === 1 ? "" : "m"} ser adicionado{itensNaoEncontrados.length === 1 ? "" : "s"} manualmente: {itensNaoEncontrados.map((l) => l.nome).join(", ")}.
+              </div>
+            )}
+          </div>
+        )}
         {isAdmin && (
           <Field label="Vendedor responsável">
             <select className={inputCls} value={vendedorNome} onChange={(e) => setVendedorNome(e.target.value)}>
@@ -1850,6 +1999,17 @@ export default function ColorShopDashboard() {
 
         <div className="border border-gray-200 rounded-lg p-4 mb-4 bg-gray-50">
           <div className="text-xs font-medium text-gray-500 mb-3">Adicionar produto à nota</div>
+          <Field label="Buscar produto pelo nome">
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                className={`${inputCls} pl-8`}
+                value={buscaProduto}
+                onChange={(e) => setBuscaProduto(e.target.value)}
+                placeholder="Digite o nome do produto..."
+              />
+            </div>
+          </Field>
           <div className="grid grid-cols-2 gap-3 mb-3">
             <Field label="Filtrar por marca">
               <select className={inputCls} value={filtroMarca} onChange={(e) => setFiltroMarca(e.target.value)}>
@@ -1974,7 +2134,7 @@ export default function ColorShopDashboard() {
           disabled={carrinho.length === 0}
           className="w-full bg-emerald-800 hover:bg-emerald-900 disabled:opacity-40 text-white rounded-md py-2 text-sm font-medium"
         >
-          {isEdit ? "Salvar alterações" : "Finalizar venda"}
+          {isEdit ? "Salvar alterações" : isConvertendo ? "Confirmar venda" : "Finalizar venda"}
         </button>
       </Modal>
     );
@@ -1986,10 +2146,14 @@ export default function ColorShopDashboard() {
     const [clienteNomeLivre, setClienteNomeLivre] = useState("");
     const [filtroMarca, setFiltroMarca] = useState("");
     const [filtroTipo, setFiltroTipo] = useState("");
+    const [buscaProduto, setBuscaProduto] = useState("");
     const marcas = useMemo(() => Array.from(new Set(estoque.map((i) => i.marca).filter(Boolean))).sort(), [estoque]);
     const tipos = useMemo(() => Array.from(new Set(estoque.map((i) => i.tipo).filter(Boolean))).sort(), [estoque]);
     const itensFiltrados = estoque.filter(
-      (i) => (filtroMarca === "" || i.marca === filtroMarca) && (filtroTipo === "" || i.tipo === filtroTipo)
+      (i) =>
+        (filtroMarca === "" || i.marca === filtroMarca) &&
+        (filtroTipo === "" || i.tipo === filtroTipo) &&
+        (buscaProduto.trim() === "" || i.nome.toLowerCase().includes(buscaProduto.trim().toLowerCase()))
     );
     const [itemId, setItemId] = useState(estoque[0]?.id || "");
     const [qtd, setQtd] = useState(1);
@@ -2047,6 +2211,17 @@ export default function ColorShopDashboard() {
 
         <div className="border border-gray-200 rounded-lg p-4 mb-4 bg-gray-50">
           <div className="text-xs font-medium text-gray-500 mb-3">Adicionar produto ao orçamento</div>
+          <Field label="Buscar produto pelo nome">
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                className={`${inputCls} pl-8`}
+                value={buscaProduto}
+                onChange={(e) => setBuscaProduto(e.target.value)}
+                placeholder="Digite o nome do produto..."
+              />
+            </div>
+          </Field>
           <div className="grid grid-cols-2 gap-3 mb-3">
             <Field label="Filtrar por marca">
               <select className={inputCls} value={filtroMarca} onChange={(e) => setFiltroMarca(e.target.value)}>
@@ -2595,15 +2770,32 @@ export default function ColorShopDashboard() {
   function PessoaModal({ tipo }) {
     const [nome, setNome] = useState("");
     const [contato, setContato] = useState("");
+    const [loja, setLoja] = useState("");
     const isCliente = tipo === "cliente";
+    const lojasExistentes = Array.from(new Set(clientes.map((c) => c.loja).filter(Boolean))).sort();
     return (
       <Modal title={isCliente ? "Novo cliente" : "Novo fornecedor"} onClose={() => setModal(null)}>
         <Field label="Nome"><input className={inputCls} value={nome} onChange={(e) => setNome(e.target.value)} /></Field>
         <Field label="Contato"><input className={inputCls} value={contato} onChange={(e) => setContato(e.target.value)} placeholder="Telefone ou e-mail" /></Field>
+        {isCliente && (
+          <Field label="Loja (opcional)">
+            <input
+              list="lista-lojas"
+              className={inputCls}
+              value={loja}
+              onChange={(e) => setLoja(e.target.value)}
+              placeholder="Ex: Farmácia Zep"
+            />
+            <datalist id="lista-lojas">
+              {lojasExistentes.map((l) => <option key={l} value={l} />)}
+            </datalist>
+            <div className="text-xs text-gray-400 mt-1">Use o mesmo nome de loja pra agrupar contatos da mesma farmácia/loja, mesmo que atendidos por vendedores diferentes.</div>
+          </Field>
+        )}
         <button
           onClick={() => {
             if (!nome) return;
-            if (isCliente) setClientes((c) => [...c, { id: uid(), nome, contato, criadoPor: authUser?.nome || null }]);
+            if (isCliente) setClientes((c) => [...c, { id: uid(), nome, contato, loja: loja.trim(), criadoPor: authUser?.nome || null }]);
             else setFornecedores((f) => [...f, { id: uid(), nome, contato }]);
             setModal(null);
           }}
@@ -2620,6 +2812,81 @@ export default function ColorShopDashboard() {
     return (
       <Modal title="Ajustar câmbio" onClose={() => setModal(null)}>
         <CambioForm initial={cambio} onSave={(v) => { setCambio(v); setModal(null); }} />
+      </Modal>
+    );
+  }
+
+  function ClienteHistoricoModal({ cliente, onClose }) {
+    const vendasCliente = vendas.filter((v) => v.clienteId === cliente.id).sort((a, b) => b.data.localeCompare(a.data));
+    const total = vendasCliente.reduce((s, v) => s + v.valor, 0);
+    return (
+      <Modal title={`Compras de ${cliente.nome}`} onClose={onClose} wide>
+        {cliente.loja && <div className="text-xs text-gray-400 -mt-2 mb-3">Loja: {cliente.loja}</div>}
+        <div className="text-sm text-gray-500 mb-3">{vendasCliente.length} compras · Total: <span className="font-semibold text-gray-900">{fmtUSD(total)}</span></div>
+        {vendasCliente.length === 0 ? (
+          <div className="text-sm text-gray-400 text-center py-6 border border-dashed border-gray-200 rounded-lg">Nenhuma compra registrada ainda.</div>
+        ) : (
+          <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-96 overflow-y-auto">
+            {vendasCliente.map((v) => (
+              <div key={v.id} className="px-3 py-2.5 text-sm">
+                <div className="flex items-center justify-between">
+                  <div className="font-medium text-gray-900">#{v.id} · {fmtDate(v.data)}</div>
+                  <Badge status={v.status} />
+                </div>
+                <div className="text-xs text-gray-400 mt-0.5">
+                  {(v.itens || []).map((l) => `${l.itemNome} ×${l.qtd}`).join(", ")}
+                </div>
+                <div className="text-xs text-gray-500 mt-0.5">Vendedor: {v.vendedor || "—"} · {v.pagamento} ({v.condicao})</div>
+                <div className="text-right font-semibold text-gray-900 mt-1">{fmtUSD(v.valor)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
+    );
+  }
+
+  function LojaHistoricoModal({ loja, onClose }) {
+    const contatosDaLoja = clientes.filter((c) => c.loja === loja);
+    const idsContatos = new Set(contatosDaLoja.map((c) => c.id));
+    const vendasLoja = vendas.filter((v) => idsContatos.has(v.clienteId)).sort((a, b) => b.data.localeCompare(a.data));
+    const total = vendasLoja.reduce((s, v) => s + v.valor, 0);
+    const pendentesAPrazo = vendasLoja.filter((v) => v.condicao === "A prazo" && v.status === "Pendente");
+    return (
+      <Modal title={`Loja: ${loja}`} onClose={onClose} wide>
+        <div className="text-xs text-gray-400 -mt-2 mb-3">
+          Contatos: {contatosDaLoja.map((c) => c.nome).join(", ")}
+        </div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm text-gray-500">{vendasLoja.length} compras · Total: <span className="font-semibold text-gray-900">{fmtUSD(total)}</span></div>
+          {pendentesAPrazo.length > 0 && (
+            <button
+              onClick={() => imprimirNotasEmLote(pendentesAPrazo, loja)}
+              className="flex items-center gap-1.5 text-sm font-medium border border-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-50"
+            >
+              <Printer size={14} /> Imprimir {pendentesAPrazo.length} notas pendentes
+            </button>
+          )}
+        </div>
+        {vendasLoja.length === 0 ? (
+          <div className="text-sm text-gray-400 text-center py-6 border border-dashed border-gray-200 rounded-lg">Nenhuma compra registrada ainda para essa loja.</div>
+        ) : (
+          <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-96 overflow-y-auto">
+            {vendasLoja.map((v) => (
+              <div key={v.id} className="px-3 py-2.5 text-sm">
+                <div className="flex items-center justify-between">
+                  <div className="font-medium text-gray-900">#{v.id} · {v.clienteNome} · {fmtDate(v.data)}</div>
+                  <Badge status={v.status} />
+                </div>
+                <div className="text-xs text-gray-400 mt-0.5">
+                  {(v.itens || []).map((l) => `${l.itemNome} ×${l.qtd}`).join(", ")}
+                </div>
+                <div className="text-xs text-gray-500 mt-0.5">Vendedor: {v.vendedor || "—"} · {v.pagamento} ({v.condicao})</div>
+                <div className="text-right font-semibold text-gray-900 mt-1">{fmtUSD(v.valor)}</div>
+              </div>
+            ))}
+          </div>
+        )}
       </Modal>
     );
   }
@@ -2891,7 +3158,7 @@ export default function ColorShopDashboard() {
                   <Download size={14} /> <span className="hidden sm:inline">Backup</span>
                 </button>
               )}
-              <button onClick={() => { setEditingVenda(null); setModal("venda"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-2">
+              <button onClick={() => { setEditingVenda(null); setConvertendoOrcamento(null); setModal("venda"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-2">
                 <Plus size={14} /> Nova venda
               </button>
             </div>
@@ -2914,6 +3181,8 @@ export default function ColorShopDashboard() {
       {modal === "orcamento" && <OrcamentoModal />}
       {modal === "vendedor" && <VendedorModal />}
       {lightbox && <PhotoLightbox src={lightbox.src} nome={lightbox.nome} onClose={() => setLightbox(null)} />}
+      {viewingCliente && <ClienteHistoricoModal cliente={viewingCliente} onClose={() => setViewingCliente(null)} />}
+      {viewingLoja && <LojaHistoricoModal loja={viewingLoja} onClose={() => setViewingLoja(null)} />}
     </div>
   );
 }
