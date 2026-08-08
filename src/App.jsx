@@ -1681,24 +1681,11 @@ export default function ColorShopDashboard() {
   function gerarTextoOrcamento(orc) {
     const linhas = orc.itens.map((l) => `• ${l.nome}${l.marca ? ` (${l.marca})` : ""} ×${l.qtd} - ${fmtUSD(l.precoUnit * l.qtd)}`).join("\n");
     return [
-      "*INDUFARMA — DISTRIBUIDORA*",
-      "_Orçamento comercial_",
-      "",
-      `Data: ${fmtDate(orc.data)}`,
-      orc.clienteNome ? `Cliente: ${orc.clienteNome}` : null,
-      orc.vendedor ? `Atendido por: ${orc.vendedor}` : null,
-      "",
-      "*Itens:*",
+      "Itens:",
       linhas,
       "",
-      `*Total: ${fmtUSD(orc.total)}*`,
-      `Total em R$: ${fmtBRL(orc.total * cambio.chacoVenda)}`,
       `Câmbio do dia: ${fmtBRL(cambio.chacoVenda)}/US$`,
-      "",
-      `⚠️ Orçamento válido somente para o dia ${fmtDate(orc.data)}.`,
-      "_Este orçamento não tem valor fiscal._",
-      "Qualquer dúvida, estamos à disposição!",
-    ].filter((l) => l !== null).join("\n");
+    ].join("\n");
   }
   function copiarOrcamento(orc) {
     const texto = gerarTextoOrcamento(orc);
