@@ -229,6 +229,7 @@ export default function ColorShopDashboard() {
   const [editingCompra, setEditingCompra] = useState(null);
   const [viewingCliente, setViewingCliente] = useState(null);
   const [viewingLoja, setViewingLoja] = useState(null);
+  const [editingPessoa, setEditingPessoa] = useState(null);
   const [convertendoOrcamento, setConvertendoOrcamento] = useState(null);
   const [editingConta, setEditingConta] = useState(null);
   const [payingConta, setPayingConta] = useState(null);
@@ -1517,7 +1518,7 @@ export default function ColorShopDashboard() {
                 <List size={14} /> Enviar lista de atacado
               </button>
             )}
-            <button onClick={() => setModal(isClientes ? "cliente" : "fornecedor")} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
+            <button onClick={() => { setEditingPessoa(null); setModal(isClientes ? "cliente" : "fornecedor"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
               <Plus size={14} /> Novo
             </button>
           </div>
@@ -1534,7 +1535,9 @@ export default function ColorShopDashboard() {
             </tr>
           </thead>
           <tbody>
-            {dataFiltrada.map((p) => (
+            {dataFiltrada.map((p) => {
+              const podeEditar = isAdmin || (isClientes && p.criadoPor === authUser?.nome);
+              return (
               <tr key={p.id} className="border-b border-gray-50">
                 <td className="px-5 py-3 font-medium text-gray-900">{p.nome}</td>
                 {isClientes && <td className="px-5 py-3 text-gray-600">{p.loja || "—"}</td>}
@@ -1542,6 +1545,11 @@ export default function ColorShopDashboard() {
                 {isClientes && isAdmin && <td className="px-5 py-3 text-gray-600">{p.criadoPor || "—"}</td>}
                 <td className="px-5 py-3">
                   <div className="flex items-center gap-3">
+                    {podeEditar && (
+                      <button onClick={() => { setEditingPessoa(p); setModal(isClientes ? "cliente" : "fornecedor"); }} className="text-gray-400 hover:text-emerald-700" title="Editar">
+                        <Pencil size={15} />
+                      </button>
+                    )}
                     {isClientes && (
                       <button onClick={() => setViewingCliente(p)} className="text-gray-400 hover:text-emerald-700" title="Ver compras deste cliente">
                         <FileText size={15} />
@@ -1572,7 +1580,8 @@ export default function ColorShopDashboard() {
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
             {dataFiltrada.length === 0 && (
               <tr><td colSpan={1 + (isClientes ? 1 : 0) + (showContato ? 1 : 0) + (isClientes && isAdmin ? 1 : 0) + 1} className="py-8 text-center text-gray-400 text-sm">{placeholder}</td></tr>
             )}
@@ -2768,13 +2777,20 @@ export default function ColorShopDashboard() {
   }
 
   function PessoaModal({ tipo }) {
-    const [nome, setNome] = useState("");
-    const [contato, setContato] = useState("");
-    const [loja, setLoja] = useState("");
+    const isEdit = !!editingPessoa;
+    const [nome, setNome] = useState(editingPessoa?.nome || "");
+    const [contato, setContato] = useState(editingPessoa?.contato || "");
+    const [loja, setLoja] = useState(editingPessoa?.loja || "");
     const isCliente = tipo === "cliente";
     const lojasExistentes = Array.from(new Set(clientes.map((c) => c.loja).filter(Boolean))).sort();
+
+    function fecharModal() {
+      setModal(null);
+      setEditingPessoa(null);
+    }
+
     return (
-      <Modal title={isCliente ? "Novo cliente" : "Novo fornecedor"} onClose={() => setModal(null)}>
+      <Modal title={isEdit ? (isCliente ? "Editar cliente" : "Editar fornecedor") : (isCliente ? "Novo cliente" : "Novo fornecedor")} onClose={fecharModal}>
         <Field label="Nome"><input className={inputCls} value={nome} onChange={(e) => setNome(e.target.value)} /></Field>
         <Field label="Contato"><input className={inputCls} value={contato} onChange={(e) => setContato(e.target.value)} placeholder="Telefone ou e-mail" /></Field>
         {isCliente && (
@@ -2795,9 +2811,14 @@ export default function ColorShopDashboard() {
         <button
           onClick={() => {
             if (!nome) return;
-            if (isCliente) setClientes((c) => [...c, { id: uid(), nome, contato, loja: loja.trim(), criadoPor: authUser?.nome || null }]);
-            else setFornecedores((f) => [...f, { id: uid(), nome, contato }]);
-            setModal(null);
+            if (isEdit) {
+              if (isCliente) setClientes((c) => c.map((x) => (x.id === editingPessoa.id ? { ...x, nome, contato, loja: loja.trim() } : x)));
+              else setFornecedores((f) => f.map((x) => (x.id === editingPessoa.id ? { ...x, nome, contato } : x)));
+            } else {
+              if (isCliente) setClientes((c) => [...c, { id: uid(), nome, contato, loja: loja.trim(), criadoPor: authUser?.nome || null }]);
+              else setFornecedores((f) => [...f, { id: uid(), nome, contato }]);
+            }
+            fecharModal();
           }}
           disabled={!nome}
           className="w-full bg-emerald-800 hover:bg-emerald-900 disabled:opacity-40 text-white rounded-md py-2 text-sm font-medium"
