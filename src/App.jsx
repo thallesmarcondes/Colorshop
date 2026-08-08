@@ -709,34 +709,40 @@ export default function ColorShopDashboard() {
 
   function imprimirNotasEmLote(vendasLote, tituloGrupo) {
     if (!vendasLote || vendasLote.length === 0) return;
+    const linha = (label, valor) => `<div class="row"><span>${label}</span><span>${valor}</span></div>`;
     const blocos = vendasLote
       .map((v) => {
-        const linhas = (v.itens || [])
-          .map(
-            (l) => `
-            <tr>
-              <td style="padding:4px 0;">${l.itemNome}${l.marca ? `<div style="font-size:10px;color:#6b7280;">Marca: ${l.marca}</div>` : ""}</td>
-              <td style="padding:4px 0;text-align:center;">${l.qtd}</td>
-              <td style="padding:4px 0;text-align:right;">${fmtUSD(l.precoUnit)}</td>
-              <td style="padding:4px 0;text-align:right;">${fmtUSD(l.subtotal)}</td>
-            </tr>`
-          )
+        const itensHtml = (v.itens || [])
+          .map((l) => {
+            const nomeLinha = `${l.itemNome}${l.marca ? ` (${l.marca})` : ""}`;
+            return `
+            <div class="item">
+              <div class="item-nome">${nomeLinha}</div>
+              <div class="row">
+                <span>${l.qtd} x ${fmtUSD(l.precoUnit)}</span>
+                <span>${fmtUSD(l.subtotal)}</span>
+              </div>
+            </div>`;
+          })
           .join("");
         return `
         <div class="nota">
-          <div class="nota-head">
-            <div><strong>Venda #${v.id}</strong> · ${fmtDate(v.data)}</div>
-            <div>${v.status}</div>
+          <div class="center">
+            <div class="brand-name">DISTRIBUIDORA INDUFARMA</div>
+            <div class="subtitle">Nota a prazo pendente</div>
           </div>
-          <div class="row"><span>Cliente</span><span>${v.clienteNome}</span></div>
-          <div class="row"><span>Vendedor</span><span>${v.vendedor || "—"}</span></div>
-          ${v.vencimento ? `<div class="row"><span>Vencimento</span><span>${fmtDate(v.vencimento)}</span></div>` : ""}
-          <table>
-            <thead><tr><th>Item</th><th style="text-align:center;">Qtd</th><th style="text-align:right;">Unit.</th><th style="text-align:right;">Subtotal</th></tr></thead>
-            <tbody>${linhas}</tbody>
-          </table>
-          <div class="nota-total"><span>Total</span><span>${fmtUSD(v.valor)}</span></div>
-        </div>`;
+          <div class="sep"></div>
+          ${linha("Venda", `#${v.id}`)}
+          ${linha("Cliente", v.clienteNome)}
+          ${linha("Vendedor", v.vendedor || "—")}
+          ${linha("Data", fmtDate(v.data))}
+          ${v.vencimento ? linha("Vencimento", fmtDate(v.vencimento)) : ""}
+          <div class="sep"></div>
+          ${itensHtml}
+          <div class="sep"></div>
+          <div class="total-row"><span>TOTAL</span><span>${fmtUSD(v.valor)}</span></div>
+        </div>
+        <div class="corte">✂ - - - - - - - - - - - - - - - - - - - - - - - - - - -</div>`;
       })
       .join("");
     const totalGeral = vendasLote.reduce((s, v) => s + v.valor, 0);
@@ -746,31 +752,44 @@ export default function ColorShopDashboard() {
         <title>Notas — ${tituloGrupo}</title>
         <meta charset="utf-8" />
         <style>
-          body { font-family: -apple-system, Arial, sans-serif; color: #111827; padding: 24px; max-width: 480px; margin: 0 auto; }
-          .header { text-align: center; margin-bottom: 18px; }
-          .brand-name { font-size: 16px; font-weight: 700; color: #065f46; }
-          .subtitle { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.03em; margin-top: 2px; }
-          .nota { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; page-break-inside: avoid; }
-          .nota-head { display: flex; justify-content: space-between; font-size: 12px; color: #6b7280; margin-bottom: 6px; border-bottom: 1px dashed #d1d5db; padding-bottom: 6px; }
-          .row { display: flex; justify-content: space-between; font-size: 12.5px; padding: 1px 0; color: #374151; }
-          table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12px; }
-          thead th { text-align: left; border-bottom: 1px solid #111827; padding-bottom: 4px; font-size: 9.5px; text-transform: uppercase; color: #6b7280; }
-          .nota-total { display: flex; justify-content: space-between; font-weight: 700; font-size: 13px; margin-top: 6px; border-top: 1px solid #111827; padding-top: 4px; color: #065f46; }
-          .total-geral { display: flex; justify-content: space-between; font-weight: 700; font-size: 16px; margin-top: 10px; border-top: 2px solid #111827; padding-top: 10px; color: #065f46; }
-          .footer { margin-top: 18px; text-align: center; font-size: 10.5px; color: #9ca3af; }
+          @page { size: 80mm auto; margin: 0; }
+          * { box-sizing: border-box; }
+          body {
+            width: 72mm;
+            margin: 0 auto;
+            padding: 3mm 3mm 6mm;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            line-height: 1.45;
+            color: #000;
+          }
+          .center { text-align: center; }
+          .brand-name { font-size: 15px; font-weight: 700; letter-spacing: 0.03em; }
+          .subtitle { font-size: 10.5px; margin-top: 1px; }
+          .sep { border-top: 1px dashed #000; margin: 6px 0; }
+          .row { display: flex; justify-content: space-between; font-size: 12px; }
+          .item { margin: 5px 0; }
+          .item-nome { font-weight: 600; }
+          .total-row { display: flex; justify-content: space-between; font-weight: 700; font-size: 14px; margin-top: 4px; }
+          .nota { page-break-inside: avoid; }
+          .corte { text-align: center; font-size: 10px; color: #666; margin: 10px 0; }
+          .resumo { margin-top: 6px; }
+          .footer { margin-top: 10px; font-size: 10.5px; text-align: center; }
         </style>
       </head>
       <body>
-        <div class="header">
-          <div class="brand-name">DISTRIBUIDORA INDUFARMA</div>
+        <div class="center" style="margin-bottom:8px;">
           <div class="subtitle">Notas a prazo pendentes — ${tituloGrupo}</div>
         </div>
         ${blocos}
-        <div class="total-geral"><span>Total geral</span><span>${fmtUSD(totalGeral)}</span></div>
+        <div class="resumo">
+          <div class="total-row"><span>TOTAL GERAL</span><span>${fmtUSD(totalGeral)}</span></div>
+        </div>
+        <div class="sep"></div>
         <div class="footer">Estas notas não têm valor fiscal.<br/>Distribuidora Indufarma</div>
       </body>
       </html>`;
-    const win = window.open("", "_blank", "width=480,height=680");
+    const win = window.open("", "_blank", "width=320,height=680");
     if (!win) return;
     win.document.write(html);
     win.document.close();
