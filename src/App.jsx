@@ -230,6 +230,7 @@ export default function ColorShopDashboard() {
   const [viewingCliente, setViewingCliente] = useState(null);
   const [viewingLoja, setViewingLoja] = useState(null);
   const [editingPessoa, setEditingPessoa] = useState(null);
+  const [viewingVendedor, setViewingVendedor] = useState(null);
   const [convertendoOrcamento, setConvertendoOrcamento] = useState(null);
   const [editingConta, setEditingConta] = useState(null);
   const [payingConta, setPayingConta] = useState(null);
@@ -1311,23 +1312,24 @@ export default function ColorShopDashboard() {
     vendas.forEach((v) => {
       const nomeVendedor = v.vendedor || "Sem vendedor / Admin";
       if (!porVendedor[nomeVendedor]) {
-        porVendedor[nomeVendedor] = { nome: nomeVendedor, numVendas: 0, unidades: 0, valorTotal: 0, lucro: 0, produtos: {} };
+        porVendedor[nomeVendedor] = { nome: nomeVendedor, numVendas: 0, unidades: 0, valorTotal: 0, lucroReal: 0, lucroVendedor: 0, produtos: {} };
       }
       porVendedor[nomeVendedor].numVendas += 1;
       (v.itens || []).forEach((l) => {
         const itemEstoque = estoque.find((i) => i.id === l.itemId);
-        const custoRef = itemEstoque ? (itemEstoque.custoVendedor ?? itemEstoque.custo) : l.precoUnit;
-        const lucroItem = (l.precoUnit - custoRef) * l.qtd;
+        const custoRealRef = itemEstoque ? itemEstoque.custo : l.precoUnit;
+        const custoVendedorRef = itemEstoque ? (itemEstoque.custoVendedor ?? itemEstoque.custo) : l.precoUnit;
         porVendedor[nomeVendedor].unidades += l.qtd;
         porVendedor[nomeVendedor].valorTotal += l.precoUnit * l.qtd;
-        porVendedor[nomeVendedor].lucro += lucroItem;
+        porVendedor[nomeVendedor].lucroReal += (l.precoUnit - custoRealRef) * l.qtd;
+        porVendedor[nomeVendedor].lucroVendedor += (l.precoUnit - custoVendedorRef) * l.qtd;
         porVendedor[nomeVendedor].produtos[l.itemNome] = (porVendedor[nomeVendedor].produtos[l.itemNome] || 0) + l.qtd;
       });
     });
     const listaVendedores = Object.values(porVendedor)
       .map((v) => ({
         ...v,
-        comissao: v.lucro * COMISSAO_PCT,
+        comissao: v.lucroVendedor * COMISSAO_PCT,
         top3: Object.entries(v.produtos).sort((a, b) => b[1] - a[1]).slice(0, 3),
       }))
       .sort((a, b) => b.valorTotal - a.valorTotal);
@@ -1366,7 +1368,7 @@ export default function ColorShopDashboard() {
 
         <TableShell
           title="Desempenho e comissão por vendedor"
-          sub={`Comissão de 20% sobre o lucro, calculado com o custo do vendedor (não o custo real) · Total a pagar: ${fmtUSD(comissaoTotalGeral)}`}
+          sub={`Comissão de 20% sobre o lucro do vendedor (não o lucro real) · Total a pagar: ${fmtUSD(comissaoTotalGeral)}`}
         >
           <table className="w-full text-sm">
             <thead>
@@ -1375,8 +1377,10 @@ export default function ColorShopDashboard() {
                 <th className="px-5 py-2 font-medium">VENDAS</th>
                 <th className="px-5 py-2 font-medium">UNIDADES</th>
                 <th className="px-5 py-2 font-medium">VALOR VENDIDO</th>
-                <th className="px-5 py-2 font-medium">LUCRO</th>
+                <th className="px-5 py-2 font-medium">LUCRO REAL</th>
+                <th className="px-5 py-2 font-medium">LUCRO VENDEDOR</th>
                 <th className="px-5 py-2 font-medium">COMISSÃO (20%)</th>
+                <th className="px-5 py-2 font-medium">AÇÕES</th>
               </tr>
             </thead>
             <tbody>
@@ -1393,12 +1397,18 @@ export default function ColorShopDashboard() {
                   <td className="px-5 py-3 text-gray-600">{v.numVendas}</td>
                   <td className="px-5 py-3 text-gray-600">{v.unidades}</td>
                   <td className="px-5 py-3 text-gray-600">{fmtUSD(v.valorTotal)}</td>
-                  <td className="px-5 py-3 text-gray-600">{fmtUSD(v.lucro)}</td>
+                  <td className="px-5 py-3 text-gray-600">{fmtUSD(v.lucroReal)}</td>
+                  <td className="px-5 py-3 text-gray-600">{fmtUSD(v.lucroVendedor)}</td>
                   <td className="px-5 py-3 font-medium text-emerald-700">{fmtUSD(v.comissao)}</td>
+                  <td className="px-5 py-3">
+                    <button onClick={() => setViewingVendedor(v.nome)} className="text-gray-400 hover:text-emerald-700" title="Ver todas as vendas deste vendedor">
+                      <FileText size={15} />
+                    </button>
+                  </td>
                 </tr>
               ))}
               {listaVendedores.length === 0 && (
-                <tr><td colSpan={6} className="py-8 text-center text-gray-400 text-sm">Nenhuma venda registrada ainda.</td></tr>
+                <tr><td colSpan={8} className="py-8 text-center text-gray-400 text-sm">Nenhuma venda registrada ainda.</td></tr>
               )}
             </tbody>
           </table>
@@ -2918,6 +2928,66 @@ export default function ColorShopDashboard() {
     );
   }
 
+  function VendedorHistoricoModal({ nomeVendedor, onClose }) {
+    const vendasVendedor = vendas.filter((v) => (v.vendedor || "Sem vendedor / Admin") === nomeVendedor).sort((a, b) => b.data.localeCompare(a.data));
+    const total = vendasVendedor.reduce((s, v) => s + v.valor, 0);
+    const lucroReal = vendasVendedor.reduce(
+      (s, v) => s + (v.itens || []).reduce((s2, l) => {
+        const item = estoque.find((i) => i.id === l.itemId);
+        const custoRealRef = item ? item.custo : l.precoUnit;
+        return s2 + (l.precoUnit - custoRealRef) * l.qtd;
+      }, 0),
+      0
+    );
+    const lucroVendedor = vendasVendedor.reduce(
+      (s, v) => s + (v.itens || []).reduce((s2, l) => {
+        const item = estoque.find((i) => i.id === l.itemId);
+        const custoVendedorRef = item ? (item.custoVendedor ?? item.custo) : l.precoUnit;
+        return s2 + (l.precoUnit - custoVendedorRef) * l.qtd;
+      }, 0),
+      0
+    );
+    return (
+      <Modal title={`Vendas de ${nomeVendedor}`} onClose={onClose} wide>
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          <div className="border border-gray-200 rounded-lg p-3">
+            <div className="text-[10px] tracking-wide text-gray-400 font-medium">TOTAL VENDIDO</div>
+            <div className="text-base font-semibold text-gray-900 mt-0.5">{fmtUSD(total)}</div>
+          </div>
+          <div className="border border-gray-200 rounded-lg p-3">
+            <div className="text-[10px] tracking-wide text-gray-400 font-medium">LUCRO REAL</div>
+            <div className="text-base font-semibold text-gray-900 mt-0.5">{fmtUSD(lucroReal)}</div>
+          </div>
+          <div className="border border-gray-200 rounded-lg p-3">
+            <div className="text-[10px] tracking-wide text-gray-400 font-medium">LUCRO VENDEDOR</div>
+            <div className="text-base font-semibold text-gray-900 mt-0.5">{fmtUSD(lucroVendedor)}</div>
+          </div>
+        </div>
+        <div className="text-sm text-gray-500 mb-2">{vendasVendedor.length} vendas</div>
+        {vendasVendedor.length === 0 ? (
+          <div className="text-sm text-gray-400 text-center py-6 border border-dashed border-gray-200 rounded-lg">Nenhuma venda registrada ainda.</div>
+        ) : (
+          <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-96 overflow-y-auto">
+            {vendasVendedor.map((v) => (
+              <div key={v.id} className="px-3 py-2.5 text-sm">
+                <div className="flex items-center justify-between">
+                  <div className="font-medium text-gray-900">#{v.id} · {fmtDate(v.data)}</div>
+                  <Badge status={v.status} />
+                </div>
+                <div className="text-xs text-gray-500 mt-0.5">Cliente: {v.clienteNome}</div>
+                <div className="text-xs text-gray-400 mt-0.5">
+                  {(v.itens || []).map((l) => `${l.itemNome} ×${l.qtd}`).join(", ")}
+                </div>
+                <div className="text-xs text-gray-500 mt-0.5">{v.pagamento} ({v.condicao})</div>
+                <div className="text-right font-semibold text-gray-900 mt-1">{fmtUSD(v.valor)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
+    );
+  }
+
   function backup() {
     const data = { estoque, vendas, compras, clientes, fornecedores, caixas, movimentos, cambio };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -3210,6 +3280,7 @@ export default function ColorShopDashboard() {
       {lightbox && <PhotoLightbox src={lightbox.src} nome={lightbox.nome} onClose={() => setLightbox(null)} />}
       {viewingCliente && <ClienteHistoricoModal cliente={viewingCliente} onClose={() => setViewingCliente(null)} />}
       {viewingLoja && <LojaHistoricoModal loja={viewingLoja} onClose={() => setViewingLoja(null)} />}
+      {viewingVendedor && <VendedorHistoricoModal nomeVendedor={viewingVendedor} onClose={() => setViewingVendedor(null)} />}
     </div>
   );
 }
