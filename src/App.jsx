@@ -3,7 +3,7 @@ import {
   LayoutGrid, ArrowUpRight, ArrowDownLeft, Wallet, Users, Truck,
   RefreshCw, Plus, X, Trash2, Search, Download, Home, Loader2, Pencil, Receipt, Check, Copy,
   Lock, UserCog, LogOut, FileText, Printer, MessageCircle, Eye, EyeOff,
-  Menu, Image as ImageIcon, Camera, TrendingUp, Award, List, ArrowRight, CheckCircle2
+  Menu, Image as ImageIcon, Camera, TrendingUp, Award, List, ArrowRight, CheckCircle2, ShoppingCart
 } from "lucide-react";
 import { supabase } from "./supabaseConfig";
 
@@ -309,6 +309,8 @@ export default function ColorShopDashboard() {
   const [viewingLoja, setViewingLoja] = useState(null);
   const [editingPessoa, setEditingPessoa] = useState(null);
   const [viewingVendedor, setViewingVendedor] = useState(null);
+  const [listaAtacadoFone, setListaAtacadoFone] = useState(undefined); // undefined = não abriu; null = sem contato específico; string = telefone
+  const [compraRapidaItem, setCompraRapidaItem] = useState(null);
   const [convertendoOrcamento, setConvertendoOrcamento] = useState(null);
   const [editingConta, setEditingConta] = useState(null);
   const [payingConta, setPayingConta] = useState(null);
@@ -557,7 +559,7 @@ export default function ColorShopDashboard() {
       if (existing) {
         estoqueAtualizado = estoqueAtualizado.map((i) =>
           i.id === existing.id
-            ? { ...i, qtd: i.qtd + l.qtd, custo: l.custo, custoVendedor: l.custoVendedor ?? i.custoVendedor, marca: l.marca || i.marca, tipo: l.tipo || i.tipo }
+            ? { ...i, qtd: i.qtd + l.qtd, custo: l.custo, custoVendedor: l.custoVendedor ?? i.custoVendedor, marca: l.marca || i.marca, tipo: l.tipo || i.tipo, sobEncomenda: false }
             : i
         );
       } else {
@@ -609,7 +611,7 @@ export default function ColorShopDashboard() {
       if (existing) {
         estoqueFinal = estoqueFinal.map((i) =>
           i.id === existing.id
-            ? { ...i, qtd: i.qtd + l.qtd, custo: l.custo, custoVendedor: l.custoVendedor ?? i.custoVendedor, marca: l.marca || i.marca, tipo: l.tipo || i.tipo }
+            ? { ...i, qtd: i.qtd + l.qtd, custo: l.custo, custoVendedor: l.custoVendedor ?? i.custoVendedor, marca: l.marca || i.marca, tipo: l.tipo || i.tipo, sobEncomenda: false }
             : i
         );
       } else {
@@ -884,8 +886,14 @@ export default function ColorShopDashboard() {
     setTimeout(() => win.print(), 300);
   }
 
-  function gerarTextoListaAtacado() {
-    const disponiveis = estoque.filter((i) => i.qtd > 0 && !i.sobEncomenda).sort((a, b) => a.nome.localeCompare(b.nome));
+  function gerarTextoListaAtacado({ marca, tipo } = {}) {
+    const base = estoque.filter((i) => {
+      const marcaOk = !marca || i.marca === marca;
+      const tipoOk = !tipo || i.tipo === tipo;
+      return marcaOk && tipoOk;
+    });
+
+    const disponiveis = base.filter((i) => i.qtd > 0 && !i.sobEncomenda).sort((a, b) => a.nome.localeCompare(b.nome));
     const grupos = {};
     disponiveis.forEach((i) => {
       const chave = i.marca || "Sem marca";
@@ -897,13 +905,13 @@ export default function ColorShopDashboard() {
       if (b === "Sem marca") return -1;
       return a.localeCompare(b);
     });
-    const blocos = marcasOrdenadas.flatMap((marca) => [
-      `*${marca.toUpperCase()}*`,
-      ...grupos[marca].map((i) => `• ${i.nome} — ${fmtUSD(i.atacado)}`),
+    const blocos = marcasOrdenadas.flatMap((m) => [
+      `*${m.toUpperCase()}*`,
+      ...grupos[m].map((i) => `• ${i.nome} — ${fmtUSD(i.atacado)}`),
       "",
     ]);
 
-    const sobEncomenda = estoque.filter((i) => i.sobEncomenda).sort((a, b) => a.nome.localeCompare(b.nome));
+    const sobEncomenda = base.filter((i) => i.sobEncomenda).sort((a, b) => a.nome.localeCompare(b.nome));
     const blocoEncomenda = sobEncomenda.length
       ? [
           "*🔸 SOB ENCOMENDA (*)*",
@@ -913,9 +921,11 @@ export default function ColorShopDashboard() {
         ]
       : [];
 
+    const subtitulo = marca ? `_Lista de preços — ${marca}_` : tipo ? `_Lista de preços — ${tipo}_` : "_Lista de preços — Atacado_";
+
     return [
       "*INDUFARMA — DISTRIBUIDORA*",
-      "_Lista de preços — Atacado_",
+      subtitulo,
       "",
       ...blocos,
       ...blocoEncomenda,
@@ -923,8 +933,26 @@ export default function ColorShopDashboard() {
       "Qualquer dúvida, estamos à disposição!",
     ].join("\n");
   }
-  function abrirWhatsappListaAtacado(fone) {
-    const texto = gerarTextoListaAtacado();
+  function copiarListaAtacado(filtro) {
+    const texto = gerarTextoListaAtacado(filtro);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(texto);
+    }
+  }
+  function abrirWhatsappListaAtacado(fone, filtro) {
+    const texto = gerarTextoListaAtacado(filtro);
+    // listas muito grandes (muitos produtos sob encomenda, por exemplo) não abrem
+    // certinho no link do WhatsApp — nesse caso copia pro clipboard e abre a
+    // conversa vazia, avisando pra colar manualmente
+    if (texto.length > 3000) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(texto);
+      }
+      const urlVazia = fone ? `https://wa.me/${fone}` : `https://wa.me/`;
+      window.open(urlVazia, "_blank");
+      alert("Essa lista está grande demais pra abrir já pronta no WhatsApp. Ela foi copiada — é só colar (Ctrl+V ou Cmd+V) na conversa que abriu.");
+      return;
+    }
     const url = fone ? `https://wa.me/${fone}?text=${encodeURIComponent(texto)}` : `https://wa.me/?text=${encodeURIComponent(texto)}`;
     window.open(url, "_blank");
   }
@@ -1363,6 +1391,15 @@ export default function ColorShopDashboard() {
                 {isAdmin && (
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-3">
+                      {i.sobEncomenda && (
+                        <button
+                          onClick={() => { setCompraRapidaItem(i); setEditingCompra(null); setModal("compra"); }}
+                          className="text-amber-600 hover:text-amber-800"
+                          title="Comprar do fornecedor e já colocar no meu estoque"
+                        >
+                          <ShoppingCart size={15} />
+                        </button>
+                      )}
                       <button onClick={() => { setEditingItem(i); setModal("item"); }} className="text-gray-400 hover:text-emerald-700">
                         <Pencil size={15} />
                       </button>
@@ -1583,7 +1620,7 @@ export default function ColorShopDashboard() {
         title="Compras"
         sub={`${compras.length} registros`}
         action={
-          <button onClick={() => { setEditingCompra(null); setModal("compra"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
+          <button onClick={() => { setEditingCompra(null); setCompraRapidaItem(null); setModal("compra"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
             <Plus size={14} /> Nova compra
           </button>
         }
@@ -1613,7 +1650,7 @@ export default function ColorShopDashboard() {
                 <td className="px-5 py-3 font-medium text-gray-900 align-top">{fmtUSD(c.total)}</td>
                 <td className="px-5 py-3 text-gray-600 align-top">{fmtDate(c.data)}</td>
                 <td className="px-5 py-3 align-top">
-                  <button onClick={() => { setEditingCompra(c); setModal("compra"); }} className="text-gray-400 hover:text-emerald-700" title="Editar compra">
+                  <button onClick={() => { setEditingCompra(c); setCompraRapidaItem(null); setModal("compra"); }} className="text-gray-400 hover:text-emerald-700" title="Editar compra">
                     <Pencil size={15} />
                   </button>
                 </td>
@@ -1703,7 +1740,7 @@ export default function ColorShopDashboard() {
               </select>
             )}
             {isClientes && (
-              <button onClick={() => abrirWhatsappListaAtacado()} className="flex items-center gap-1.5 text-sm font-medium border border-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-50">
+              <button onClick={() => setListaAtacadoFone(null)} className="flex items-center gap-1.5 text-sm font-medium border border-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-50">
                 <List size={14} /> Enviar lista de atacado
               </button>
             )}
@@ -1754,7 +1791,7 @@ export default function ColorShopDashboard() {
                         <button onClick={() => abrirWhatsappContato(p)} className="text-gray-400 hover:text-emerald-700" title="Enviar mensagem no WhatsApp">
                           <MessageCircle size={15} />
                         </button>
-                        <button onClick={() => abrirWhatsappListaAtacado(p.contato.replace(/[^\d]/g, ""))} className="text-gray-400 hover:text-emerald-700" title="Enviar lista de atacado">
+                        <button onClick={() => setListaAtacadoFone(p.contato.replace(/[^\d]/g, ""))} className="text-gray-400 hover:text-emerald-700" title="Enviar lista de atacado">
                           <List size={15} />
                         </button>
                       </>
@@ -2520,9 +2557,12 @@ export default function ColorShopDashboard() {
 
   function CompraModal() {
     const isEdit = !!editingCompra;
-    const [fornecedorId, setFornecedorId] = useState(editingCompra?.fornecedorId || fornecedores[0]?.id || "");
+    const fornecedorPreSelecionado = compraRapidaItem
+      ? fornecedores.find((f) => f.nome === compraRapidaItem.fornecedorNome)?.id
+      : null;
+    const [fornecedorId, setFornecedorId] = useState(editingCompra?.fornecedorId || fornecedorPreSelecionado || fornecedores[0]?.id || "");
     const [modoNovoProduto, setModoNovoProduto] = useState(false);
-    const [itemSelecionadoId, setItemSelecionadoId] = useState(estoque[0]?.id || "");
+    const [itemSelecionadoId, setItemSelecionadoId] = useState(compraRapidaItem?.id || estoque[0]?.id || "");
     const [nome, setNome] = useState("");
     const [marca, setMarca] = useState("");
     const [tipo, setTipo] = useState("");
@@ -2561,6 +2601,7 @@ export default function ColorShopDashboard() {
     function fecharModal() {
       setModal(null);
       setEditingCompra(null);
+      setCompraRapidaItem(null);
     }
 
     function addAoCarrinho() {
@@ -2583,10 +2624,16 @@ export default function ColorShopDashboard() {
       const payload = { fornecedorId, itens: carrinho, pagamento, condicao, vencimento };
       if (isEdit) editarCompra(editingCompra.id, payload);
       else registrarCompra(payload);
+      setCompraRapidaItem(null);
     }
 
     return (
-      <Modal title={isEdit ? "Editar compra" : "Nova compra"} onClose={fecharModal} wide>
+      <Modal title={isEdit ? "Editar compra" : compraRapidaItem ? "Comprar pro meu estoque" : "Nova compra"} onClose={fecharModal} wide>
+        {compraRapidaItem && (
+          <div className="mb-4 text-xs bg-amber-50 border border-amber-100 text-amber-800 rounded-md px-3 py-2">
+            Você está comprando <strong>{compraRapidaItem.nome}</strong>, que hoje é sob encomenda. Selecione a quantidade e finalize — ao confirmar, ele deixa de ser "sob encomenda" e passa a valer como estoque real, com a quantidade certa.
+          </div>
+        )}
         <Field label="Fornecedor">
           <select className={inputCls} value={fornecedorId} onChange={(e) => setFornecedorId(e.target.value)}>
             <option value="">Sem nome</option>
@@ -3503,6 +3550,78 @@ export default function ColorShopDashboard() {
     );
   }
 
+  function EnviarListaAtacadoModal({ fone, onClose }) {
+    const [modoLista, setModoLista] = useState("completa"); // "completa" | "marca" | "tipo"
+    const [marcaEscolhida, setMarcaEscolhida] = useState("");
+    const [tipoEscolhido, setTipoEscolhido] = useState("");
+
+    const marcas = useMemo(() => Array.from(new Set(estoque.map((i) => i.marca).filter(Boolean))).sort(), [estoque]);
+    const tipos = useMemo(() => Array.from(new Set(estoque.map((i) => i.tipo).filter(Boolean))).sort(), [estoque]);
+
+    const filtro = modoLista === "marca" ? { marca: marcaEscolhida } : modoLista === "tipo" ? { tipo: tipoEscolhido } : {};
+    const podeEnviar = modoLista === "completa" || (modoLista === "marca" && marcaEscolhida) || (modoLista === "tipo" && tipoEscolhido);
+    const preview = gerarTextoListaAtacado(filtro);
+    const qtdProdutos = (preview.match(/^• /gm) || []).length;
+
+    return (
+      <Modal title="Enviar lista de atacado" onClose={onClose}>
+        <Field label="O que enviar?">
+          <div className="space-y-1.5">
+            {[
+              { key: "completa", label: "Lista completa" },
+              { key: "marca", label: "Só uma marca" },
+              { key: "tipo", label: "Só um tipo" },
+            ].map((opt) => (
+              <label key={opt.key} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                <input type="radio" name="modoLista" checked={modoLista === opt.key} onChange={() => setModoLista(opt.key)} />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+        </Field>
+
+        {modoLista === "marca" && (
+          <Field label="Marca">
+            <select className={inputCls} value={marcaEscolhida} onChange={(e) => setMarcaEscolhida(e.target.value)}>
+              <option value="">— Selecionar —</option>
+              {marcas.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </Field>
+        )}
+        {modoLista === "tipo" && (
+          <Field label="Tipo">
+            <select className={inputCls} value={tipoEscolhido} onChange={(e) => setTipoEscolhido(e.target.value)}>
+              <option value="">— Selecionar —</option>
+              {tipos.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </Field>
+        )}
+
+        <div className="text-xs text-gray-400 mb-4">
+          {podeEnviar ? `${qtdProdutos} ${qtdProdutos === 1 ? "produto" : "produtos"} nessa lista.` : "Escolha uma opção pra ver quantos produtos entram na lista."}
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => { abrirWhatsappListaAtacado(fone, filtro); onClose(); }}
+            disabled={!podeEnviar}
+            className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-800 hover:bg-emerald-900 disabled:opacity-40 text-white rounded-md py-2 text-sm font-medium"
+          >
+            <MessageCircle size={14} /> Enviar no WhatsApp
+          </button>
+          <button
+            onClick={() => { copiarListaAtacado(filtro); onClose(); }}
+            disabled={!podeEnviar}
+            className="flex items-center justify-center gap-1.5 border border-gray-200 disabled:opacity-40 rounded-md px-4 py-2 text-sm font-medium hover:bg-gray-50"
+            title="Copiar lista"
+          >
+            <Copy size={14} />
+          </button>
+        </div>
+      </Modal>
+    );
+  }
+
   function LojaHistoricoModal({ loja, onClose }) {
     const contatosDaLoja = clientes.filter((c) => c.loja === loja);
     const idsContatos = new Set(contatosDaLoja.map((c) => c.id));
@@ -3902,6 +4021,7 @@ export default function ColorShopDashboard() {
       {viewingCliente && <ClienteHistoricoModal cliente={viewingCliente} onClose={() => setViewingCliente(null)} />}
       {viewingLoja && <LojaHistoricoModal loja={viewingLoja} onClose={() => setViewingLoja(null)} />}
       {viewingVendedor && <VendedorHistoricoModal nomeVendedor={viewingVendedor} onClose={() => setViewingVendedor(null)} />}
+      {listaAtacadoFone !== undefined && <EnviarListaAtacadoModal fone={listaAtacadoFone} onClose={() => setListaAtacadoFone(undefined)} />}
     </div>
   );
 }
