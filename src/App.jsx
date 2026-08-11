@@ -373,12 +373,13 @@ export default function ColorShopDashboard() {
 
   function registrarVenda({ clienteId, itens, pagamento, condicao, vencimento, vendedorNome, origemOrcamentoId }) {
     if (!itens || itens.length === 0) return;
-    // validate stock per item (aggregate qty per itemId in case of duplicates)
+    // validate stock per item (aggregate qty per itemId in case of duplicates) — itens sob encomenda não têm limite de estoque
     const qtdPorItem = {};
     itens.forEach((l) => { qtdPorItem[l.itemId] = (qtdPorItem[l.itemId] || 0) + l.qtd; });
     for (const itemId in qtdPorItem) {
       const stockItem = estoque.find((i) => i.id === itemId);
-      if (!stockItem || qtdPorItem[itemId] > stockItem.qtd) return;
+      if (!stockItem) return;
+      if (!stockItem.sobEncomenda && qtdPorItem[itemId] > stockItem.qtd) return;
     }
     // vendedores não podem vender abaixo do custo
     if (!isAdmin) {
@@ -398,7 +399,7 @@ export default function ColorShopDashboard() {
     });
     const valor = linhas.reduce((s, l) => s + l.subtotal, 0);
     const id = nextVendaId;
-    setEstoque((e) => e.map((i) => (qtdPorItem[i.id] ? { ...i, qtd: i.qtd - qtdPorItem[i.id] } : i)));
+    setEstoque((e) => e.map((i) => (qtdPorItem[i.id] && !i.sobEncomenda ? { ...i, qtd: i.qtd - qtdPorItem[i.id] } : i)));
     setVendas((v) => [
       { id, clienteId, clienteNome: cliente ? cliente.nome : "Sem nome", itens: linhas, valor, pagamento, condicao, vencimento: condicao === "A prazo" ? vencimento : null, status: condicao === "À vista" ? "Pago" : "Pendente", data: todayISO(), vendedor: (isAdmin && vendedorNome) ? vendedorNome : (authUser?.nome || null) },
       ...v,
@@ -420,12 +421,13 @@ export default function ColorShopDashboard() {
     if (!original || !itens || itens.length === 0) return;
     const oldQtdPorItem = {};
     (original.itens || []).forEach((l) => { oldQtdPorItem[l.itemId] = (oldQtdPorItem[l.itemId] || 0) + l.qtd; });
-    const estoqueRestaurado = estoque.map((i) => (oldQtdPorItem[i.id] ? { ...i, qtd: i.qtd + oldQtdPorItem[i.id] } : i));
+    const estoqueRestaurado = estoque.map((i) => (oldQtdPorItem[i.id] && !i.sobEncomenda ? { ...i, qtd: i.qtd + oldQtdPorItem[i.id] } : i));
     const qtdPorItem = {};
     itens.forEach((l) => { qtdPorItem[l.itemId] = (qtdPorItem[l.itemId] || 0) + l.qtd; });
     for (const itemId in qtdPorItem) {
       const stockItem = estoqueRestaurado.find((i) => i.id === itemId);
-      if (!stockItem || qtdPorItem[itemId] > stockItem.qtd) return;
+      if (!stockItem) return;
+      if (!stockItem.sobEncomenda && qtdPorItem[itemId] > stockItem.qtd) return;
     }
     const cliente = clientes.find((c) => c.id === clienteId);
     const linhas = itens.map((l) => {
@@ -434,7 +436,7 @@ export default function ColorShopDashboard() {
       return { itemId: l.itemId, itemNome: item.nome, marca: item.marca || "", qtd: l.qtd, tipoVenda: l.tipoVenda, precoUnit, subtotal: precoUnit * l.qtd };
     });
     const valor = linhas.reduce((s, l) => s + l.subtotal, 0);
-    setEstoque(estoqueRestaurado.map((i) => (qtdPorItem[i.id] ? { ...i, qtd: i.qtd - qtdPorItem[i.id] } : i)));
+    setEstoque(estoqueRestaurado.map((i) => (qtdPorItem[i.id] && !i.sobEncomenda ? { ...i, qtd: i.qtd - qtdPorItem[i.id] } : i)));
     if (original.condicao === "À vista") {
       const oldKey = original.pagamento === "USDT" ? "usdt" : original.pagamento === "Dólar" ? "dolar" : original.pagamento === "PIX" ? "pix" : "real";
       addMovimento(oldKey, "Saída", original.valor, `Estorno por edição da venda #${id}`);
@@ -471,7 +473,9 @@ export default function ColorShopDashboard() {
     const fornecedor = fornecedores.find((f) => f.id === fornecedorId);
     let estoqueAtualizado = estoque;
     itens.forEach((l) => {
-      const existing = estoqueAtualizado.find((i) => i.nome.toLowerCase() === l.nome.toLowerCase());
+      const existing = l.itemId
+        ? estoqueAtualizado.find((i) => i.id === l.itemId)
+        : estoqueAtualizado.find((i) => i.nome.toLowerCase() === l.nome.toLowerCase());
       if (existing) {
         estoqueAtualizado = estoqueAtualizado.map((i) =>
           i.id === existing.id
@@ -511,7 +515,9 @@ export default function ColorShopDashboard() {
     // reverte as quantidades antigas do estoque (sem deixar negativo)
     let estoqueRevertido = estoque;
     (original.itens || []).forEach((l) => {
-      const existing = estoqueRevertido.find((i) => i.nome.toLowerCase() === l.nome.toLowerCase());
+      const existing = l.itemId
+        ? estoqueRevertido.find((i) => i.id === l.itemId)
+        : estoqueRevertido.find((i) => i.nome.toLowerCase() === l.nome.toLowerCase());
       if (existing) {
         estoqueRevertido = estoqueRevertido.map((i) => (i.id === existing.id ? { ...i, qtd: Math.max(0, i.qtd - l.qtd) } : i));
       }
@@ -519,7 +525,9 @@ export default function ColorShopDashboard() {
     // aplica as novas quantidades
     let estoqueFinal = estoqueRevertido;
     itens.forEach((l) => {
-      const existing = estoqueFinal.find((i) => i.nome.toLowerCase() === l.nome.toLowerCase());
+      const existing = l.itemId
+        ? estoqueFinal.find((i) => i.id === l.itemId)
+        : estoqueFinal.find((i) => i.nome.toLowerCase() === l.nome.toLowerCase());
       if (existing) {
         estoqueFinal = estoqueFinal.map((i) =>
           i.id === existing.id
@@ -799,7 +807,7 @@ export default function ColorShopDashboard() {
   }
 
   function gerarTextoListaAtacado() {
-    const disponiveis = estoque.filter((i) => i.qtd > 0).sort((a, b) => a.nome.localeCompare(b.nome));
+    const disponiveis = estoque.filter((i) => i.qtd > 0 && !i.sobEncomenda).sort((a, b) => a.nome.localeCompare(b.nome));
     const grupos = {};
     disponiveis.forEach((i) => {
       const chave = i.marca || "Sem marca";
@@ -816,11 +824,23 @@ export default function ColorShopDashboard() {
       ...grupos[marca].map((i) => `• ${i.nome} — ${fmtUSD(i.atacado)}`),
       "",
     ]);
+
+    const sobEncomenda = estoque.filter((i) => i.sobEncomenda).sort((a, b) => a.nome.localeCompare(b.nome));
+    const blocoEncomenda = sobEncomenda.length
+      ? [
+          "*🔸 SOB ENCOMENDA (*)*",
+          ...sobEncomenda.map((i) => `• ${i.nome}${i.marca ? ` (${i.marca})` : ""} — ${fmtUSD(i.atacado)} *`),
+          "",
+          "* Produtos com (*) são sob encomenda — favor consultar disponibilidade antes de fechar o pedido.",
+        ]
+      : [];
+
     return [
       "*INDUFARMA — DISTRIBUIDORA*",
       "_Lista de preços — Atacado_",
       "",
       ...blocos,
+      ...blocoEncomenda,
       `Atualizado em ${fmtDate(todayISO())}. Preços sujeitos a alteração sem aviso prévio.`,
       "Qualquer dúvida, estamos à disposição!",
     ].join("\n");
@@ -1138,9 +1158,14 @@ export default function ColorShopDashboard() {
         sub={`${listaFiltrada.length} de ${estoque.length} mercadorias · ${unidadesEstoque} unidades`}
         action={
           isAdmin && (
-            <button onClick={() => { setEditingItem(null); setModal("item"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
-              <Plus size={14} /> Novo item
-            </button>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setModal("importarFornecedor")} className="flex items-center gap-1.5 text-sm font-medium border border-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-50">
+                <List size={14} /> Importar lista de fornecedor
+              </button>
+              <button onClick={() => { setEditingItem(null); setModal("item"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
+                <Plus size={14} /> Novo item
+              </button>
+            </div>
           )
         }
       >
@@ -1197,10 +1222,17 @@ export default function ColorShopDashboard() {
                     </div>
                   )}
                 </td>
-                <td className="px-5 py-3 font-medium text-gray-900">{i.nome}</td>
-                <td className="px-5 py-3 text-gray-600">{i.marca || "—"}</td>
+                <td className="px-5 py-3 font-medium text-gray-900">
+                  {i.nome}{i.sobEncomenda && <span className="text-amber-600" title="Produto sob encomenda"> *</span>}
+                </td>
+                <td className="px-5 py-3 text-gray-600">
+                  {i.marca || "—"}
+                  {i.sobEncomenda && i.fornecedorNome && <div className="text-[10px] text-amber-600">Fornecedor: {i.fornecedorNome}</div>}
+                </td>
                 <td className="px-5 py-3 text-gray-600">{i.tipo || "—"}</td>
-                <td className={`px-5 py-3 ${i.qtd < i.min ? "text-amber-600 font-medium" : "text-gray-600"}`}>{i.qtd}</td>
+                <td className={`px-5 py-3 ${i.sobEncomenda ? "text-amber-600 font-medium" : i.qtd < i.min ? "text-amber-600 font-medium" : "text-gray-600"}`}>
+                  {i.sobEncomenda ? "Sob encomenda" : i.qtd}
+                </td>
                 <td className="px-5 py-3 text-gray-600">{fmtUSD(isAdmin ? i.custo : i.custoVendedor)}</td>
                 <td className="px-5 py-3 text-gray-600">{fmtUSD(i.varejo)}</td>
                 <td className="px-5 py-3 text-gray-600">{fmtUSD(i.atacado)}</td>
@@ -1226,6 +1258,11 @@ export default function ColorShopDashboard() {
             )}
           </tbody>
         </table>
+        {estoque.some((i) => i.sobEncomenda) && (
+          <div className="px-5 py-3 text-xs text-gray-400 border-t border-gray-100">
+            <span className="text-amber-600 font-medium">*</span> Produto sob encomenda — não fica em estoque físico, consulte disponibilidade com o fornecedor antes de fechar a venda.
+          </div>
+        )}
       </TableShell>
       </>
     );
@@ -1915,7 +1952,7 @@ export default function ColorShopDashboard() {
       if (!isEdit) return estoque;
       const oldQtdPorItem = {};
       (editingVenda.itens || []).forEach((l) => { oldQtdPorItem[l.itemId] = (oldQtdPorItem[l.itemId] || 0) + l.qtd; });
-      return estoque.map((i) => (oldQtdPorItem[i.id] ? { ...i, qtd: i.qtd + oldQtdPorItem[i.id] } : i));
+      return estoque.map((i) => (oldQtdPorItem[i.id] && !i.sobEncomenda ? { ...i, qtd: i.qtd + oldQtdPorItem[i.id] } : i));
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [estoque]);
 
@@ -1957,7 +1994,7 @@ export default function ColorShopDashboard() {
 
     const item = estoqueBase.find((i) => i.id === itemId) || itensFiltrados[0];
     const jaNoCarrinho = carrinho.filter((l) => l.itemId === itemId).reduce((s, l) => s + l.qtd, 0);
-    const disponivel = item ? item.qtd - jaNoCarrinho : 0;
+    const disponivel = item ? (item.sobEncomenda ? Infinity : item.qtd - jaNoCarrinho) : 0;
     const precoPadrao = item ? (tipoVenda === "Atacado" ? item.atacado : item.varejo) : 0;
     const [precoUnit, setPrecoUnit] = useState(precoPadrao);
     useEffect(() => { setPrecoUnit(precoPadrao); }, [itemId, tipoVenda]);
@@ -2054,7 +2091,7 @@ export default function ColorShopDashboard() {
               {itensFiltrados.length === 0 && <option value="">Nenhum produto com esse filtro</option>}
               {itensFiltrados.map((i) => (
                 <option key={i.id} value={i.id}>
-                  {i.nome}{i.marca ? ` · ${i.marca}` : ""}{i.tipo ? ` · ${i.tipo}` : ""} ({i.qtd} disp.)
+                  {i.nome}{i.marca ? ` · ${i.marca}` : ""}{i.tipo ? ` · ${i.tipo}` : ""} ({i.sobEncomenda ? "sob encomenda *" : `${i.qtd} disp.`})
                 </option>
               ))}
             </select>
@@ -2075,9 +2112,14 @@ export default function ColorShopDashboard() {
               ))}
             </div>
           </Field>
+          {item?.sobEncomenda && (
+            <div className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-3 py-2 mb-3">
+              * Produto sob encomenda — confirme com o fornecedor antes de fechar a venda.
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3 mb-1">
-            <Field label={`Quantidade (${disponivel} disp.)`}>
-              <input type="number" min="1" max={disponivel} className={inputCls} value={qtd} onChange={(e) => setQtd(Number(e.target.value))} />
+            <Field label={item?.sobEncomenda ? "Quantidade" : `Quantidade (${disponivel} disp.)`}>
+              <input type="number" min="1" max={item?.sobEncomenda ? undefined : disponivel} className={inputCls} value={qtd} onChange={(e) => setQtd(Number(e.target.value))} />
             </Field>
             <Field label="Valor unitário (US$)">
               <input
@@ -2266,7 +2308,7 @@ export default function ColorShopDashboard() {
               {itensFiltrados.length === 0 && <option value="">Nenhum produto com esse filtro</option>}
               {itensFiltrados.map((i) => (
                 <option key={i.id} value={i.id}>
-                  {i.nome}{i.marca ? ` · ${i.marca}` : ""}{i.tipo ? ` · ${i.tipo}` : ""}
+                  {i.nome}{i.marca ? ` · ${i.marca}` : ""}{i.tipo ? ` · ${i.tipo}` : ""}{i.sobEncomenda ? " (sob encomenda *)" : ""}
                 </option>
               ))}
             </select>
@@ -2356,6 +2398,8 @@ export default function ColorShopDashboard() {
   function CompraModal() {
     const isEdit = !!editingCompra;
     const [fornecedorId, setFornecedorId] = useState(editingCompra?.fornecedorId || fornecedores[0]?.id || "");
+    const [modoNovoProduto, setModoNovoProduto] = useState(false);
+    const [itemSelecionadoId, setItemSelecionadoId] = useState(estoque[0]?.id || "");
     const [nome, setNome] = useState("");
     const [marca, setMarca] = useState("");
     const [tipo, setTipo] = useState("");
@@ -2372,12 +2416,15 @@ export default function ColorShopDashboard() {
     );
 
     const nomeTrim = nome.trim();
-    const isNovoProduto = nomeTrim !== "" && !estoque.some((i) => i.nome.toLowerCase() === nomeTrim.toLowerCase());
-    const podeAdicionar = nomeTrim !== "" && qtd > 0 && custo > 0 && custoVendedor > 0 && (!isNovoProduto || (varejo > 0 && atacado > 0));
+    const podeAdicionar = modoNovoProduto
+      ? nomeTrim !== "" && qtd > 0 && custo > 0 && custoVendedor > 0 && varejo > 0 && atacado > 0
+      : !!itemSelecionadoId && qtd > 0 && custo > 0 && custoVendedor > 0;
     const total = carrinho.reduce((s, l) => s + l.custo * l.qtd, 0);
 
+    // ao escolher um produto já existente na lista, preenche os campos com os dados dele (sem risco de duplicar por nome digitado errado)
     useEffect(() => {
-      const match = estoque.find((i) => i.nome.toLowerCase() === nomeTrim.toLowerCase());
+      if (modoNovoProduto) return;
+      const match = estoque.find((i) => i.id === itemSelecionadoId);
       if (match) {
         setCusto(match.custo);
         setCustoVendedor(match.custoVendedor ?? match.custo);
@@ -2386,8 +2433,7 @@ export default function ColorShopDashboard() {
         setMarca(match.marca || "");
         setTipo(match.tipo || "");
       }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [nomeTrim]);
+    }, [itemSelecionadoId, modoNovoProduto]);
 
     function fecharModal() {
       setModal(null);
@@ -2396,8 +2442,15 @@ export default function ColorShopDashboard() {
 
     function addAoCarrinho() {
       if (!podeAdicionar) return;
-      setCarrinho((c) => [...c, { key: uid(), nome: nomeTrim, marca, tipo, qtd, custo, custoVendedor, varejo, atacado }]);
-      setNome(""); setMarca(""); setTipo(""); setQtd(1); setCusto(0); setCustoVendedor(0); setVarejo(0); setAtacado(0);
+      if (modoNovoProduto) {
+        setCarrinho((c) => [...c, { key: uid(), nome: nomeTrim, marca, tipo, qtd, custo, custoVendedor, varejo, atacado }]);
+        setNome(""); setMarca(""); setTipo(""); setQtd(1); setCusto(0); setCustoVendedor(0); setVarejo(0); setAtacado(0);
+      } else {
+        const match = estoque.find((i) => i.id === itemSelecionadoId);
+        if (!match) return;
+        setCarrinho((c) => [...c, { key: uid(), itemId: match.id, nome: match.nome, marca, tipo, qtd, custo, custoVendedor, varejo, atacado }]);
+        setQtd(1);
+      }
     }
     function removerDoCarrinho(key) {
       setCarrinho((c) => c.filter((l) => l.key !== key));
@@ -2419,13 +2472,33 @@ export default function ColorShopDashboard() {
         </Field>
 
         <div className="border border-gray-200 rounded-lg p-4 mb-4 bg-gray-50">
-          <div className="text-xs font-medium text-gray-500 mb-3">Adicionar produto à nota</div>
-          <Field label="Mercadoria">
-            <input list="lista-produtos-compra" className={inputCls} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome do item (novo ou existente)" />
-            <datalist id="lista-produtos-compra">
-              {estoque.map((i) => <option key={i.id} value={i.nome} />)}
-            </datalist>
-          </Field>
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs font-medium text-gray-500">Adicionar produto à nota</div>
+            <button
+              type="button"
+              onClick={() => setModoNovoProduto((m) => !m)}
+              className="text-xs font-medium text-emerald-700 hover:underline"
+            >
+              {modoNovoProduto ? "← Escolher produto existente" : "+ Cadastrar produto novo"}
+            </button>
+          </div>
+
+          {modoNovoProduto ? (
+            <Field label="Nome do produto novo">
+              <input className={inputCls} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Digite o nome do produto novo" />
+            </Field>
+          ) : (
+            <Field label="Mercadoria (selecione da lista — evita duplicar)">
+              <select className={inputCls} value={itemSelecionadoId} onChange={(e) => setItemSelecionadoId(e.target.value)}>
+                {estoque.length === 0 && <option value="">Nenhum produto cadastrado ainda</option>}
+                {estoque.map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.nome}{i.marca ? ` · ${i.marca}` : ""} ({i.sobEncomenda ? "sob encomenda" : `${i.qtd} em estoque`})
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Marca">
               <input list="lista-marcas-compra" className={inputCls} value={marca} onChange={(e) => setMarca(e.target.value)} placeholder="Ex: EMS, Neo Química..." />
@@ -2452,7 +2525,7 @@ export default function ColorShopDashboard() {
             <input type="number" step="0.01" className={inputCls} value={custoVendedor} onChange={(e) => setCustoVendedor(Number(e.target.value))} />
           </Field>
           <div className="text-xs text-gray-400 -mt-2 mb-3">O custo real só aparece pra administradores. Vendedores só veem o custo que você definir aqui.</div>
-          {isNovoProduto && (
+          {modoNovoProduto && (
             <>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Preço varejo (US$) *">
@@ -2582,6 +2655,8 @@ export default function ColorShopDashboard() {
     const [varejo, setVarejo] = useState(editingItem?.varejo ?? 0);
     const [atacado, setAtacado] = useState(editingItem?.atacado ?? 0);
     const [min, setMin] = useState(editingItem?.min ?? 3);
+    const [sobEncomenda, setSobEncomenda] = useState(editingItem?.sobEncomenda || false);
+    const [fornecedorNome, setFornecedorNome] = useState(editingItem?.fornecedorNome || "");
     const [foto, setFoto] = useState(editingItem?.foto || null);
     const [fotoLoading, setFotoLoading] = useState(false);
 
@@ -2604,10 +2679,11 @@ export default function ColorShopDashboard() {
 
     function save() {
       if (!nome) return;
+      const dados = { nome, marca, tipo, qtd: sobEncomenda ? 0 : qtd, custo, custoVendedor, varejo, atacado, min, sobEncomenda, fornecedorNome: sobEncomenda ? fornecedorNome : "", foto };
       if (isEdit) {
-        setEstoque((e) => e.map((x) => (x.id === editingItem.id ? { ...x, nome, marca, tipo, qtd, custo, custoVendedor, varejo, atacado, min, foto } : x)));
+        setEstoque((e) => e.map((x) => (x.id === editingItem.id ? { ...x, ...dados } : x)));
       } else {
-        setEstoque((e) => [...e, { id: uid(), nome, marca, tipo, qtd, custo, custoVendedor, varejo, atacado, min, foto }]);
+        setEstoque((e) => [...e, { id: uid(), ...dados }]);
       }
       close();
     }
@@ -2654,8 +2730,33 @@ export default function ColorShopDashboard() {
             </datalist>
           </Field>
         </div>
+        <div className="border border-gray-200 rounded-lg p-3 mb-4 bg-gray-50">
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+            <input type="checkbox" checked={sobEncomenda} onChange={(e) => setSobEncomenda(e.target.checked)} className="rounded" />
+            Produto sob encomenda (não fica em estoque físico)
+          </label>
+          <div className="text-xs text-gray-400 mt-1">Marque se você não tem esse produto guardado, mas consegue rápido com um fornecedor. Ele aparece com (*) na lista de atacado, numa seção separada avisando o cliente pra consultar disponibilidade.</div>
+          {sobEncomenda && (
+            <div className="mt-2">
+              <Field label="Fornecedor que tem esse produto">
+                <input
+                  list="lista-fornecedores-item"
+                  className={inputCls}
+                  value={fornecedorNome}
+                  onChange={(e) => setFornecedorNome(e.target.value)}
+                  placeholder="Nome do fornecedor"
+                />
+                <datalist id="lista-fornecedores-item">
+                  {fornecedores.map((f) => <option key={f.id} value={f.nome} />)}
+                </datalist>
+              </Field>
+            </div>
+          )}
+        </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Quantidade"><input type="number" min="0" className={inputCls} value={qtd} onChange={(e) => setQtd(Number(e.target.value))} /></Field>
+          {!sobEncomenda && (
+            <Field label="Quantidade"><input type="number" min="0" className={inputCls} value={qtd} onChange={(e) => setQtd(Number(e.target.value))} /></Field>
+          )}
           <Field label="Estoque mínimo"><input type="number" min="0" className={inputCls} value={min} onChange={(e) => setMin(Number(e.target.value))} /></Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -2686,6 +2787,161 @@ export default function ColorShopDashboard() {
           className="w-full bg-emerald-800 hover:bg-emerald-900 disabled:opacity-40 text-white rounded-md py-2 text-sm font-medium"
         >
           {isEdit ? "Salvar alterações" : "Adicionar item"}
+        </button>
+      </Modal>
+    );
+  }
+
+  function ImportarFornecedorModal() {
+    const [fornecedorId, setFornecedorId] = useState(fornecedores[0]?.id || "");
+    const [linhas, setLinhas] = useState([
+      { key: uid(), nome: "", marca: "", custo: 0, tipoMargem: "percentual", valorMargem: 30 },
+    ]);
+
+    function calcularPreco(linha) {
+      const custo = Number(linha.custo) || 0;
+      const margem = Number(linha.valorMargem) || 0;
+      if (linha.tipoMargem === "percentual") return custo * (1 + margem / 100);
+      return custo + margem;
+    }
+
+    function atualizarLinha(key, campo, valor) {
+      setLinhas((ls) => ls.map((l) => (l.key === key ? { ...l, [campo]: valor } : l)));
+    }
+    function adicionarLinha() {
+      setLinhas((ls) => [...ls, { key: uid(), nome: "", marca: "", custo: 0, tipoMargem: "percentual", valorMargem: 30 }]);
+    }
+    function removerLinha(key) {
+      setLinhas((ls) => (ls.length > 1 ? ls.filter((l) => l.key !== key) : ls));
+    }
+
+    const fornecedorNome = fornecedores.find((f) => f.id === fornecedorId)?.nome || "";
+    const linhasValidas = linhas.filter((l) => l.nome.trim() !== "" && Number(l.custo) > 0);
+    const podeImportar = fornecedorId && linhasValidas.length > 0;
+
+    function importarTudo() {
+      if (!podeImportar) return;
+      const novosItens = linhasValidas.map((l) => {
+        const preco = Number(calcularPreco(l).toFixed(2));
+        return {
+          id: uid(),
+          nome: l.nome.trim(),
+          marca: l.marca.trim(),
+          tipo: "",
+          qtd: 0,
+          custo: Number(l.custo),
+          custoVendedor: Number(l.custo),
+          varejo: preco,
+          atacado: preco,
+          min: 0,
+          sobEncomenda: true,
+          fornecedorNome,
+          foto: null,
+        };
+      });
+      setEstoque((e) => [...e, ...novosItens]);
+      setModal(null);
+    }
+
+    return (
+      <Modal title="Importar lista de fornecedor" onClose={() => setModal(null)} wide>
+        <Field label="Fornecedor">
+          <select className={inputCls} value={fornecedorId} onChange={(e) => setFornecedorId(e.target.value)}>
+            <option value="">— Selecionar —</option>
+            {fornecedores.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
+          </select>
+        </Field>
+        {fornecedores.length === 0 && (
+          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-3 py-2 mb-3">
+            Você ainda não tem fornecedores cadastrados. Cancele, vá em Fornecedores e crie um primeiro.
+          </div>
+        )}
+        <div className="text-xs text-gray-400 mb-3">
+          Todos os produtos aqui entram como <span className="font-medium text-amber-600">sob encomenda</span> (com asterisco na lista de atacado) — não afeta seu estoque físico.
+        </div>
+
+        <div className="space-y-3 mb-4 max-h-96 overflow-y-auto pr-1">
+          {linhas.map((l, idx) => {
+            const preco = calcularPreco(l);
+            return (
+              <div key={l.key} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs font-medium text-gray-500">Produto {idx + 1}</div>
+                  {linhas.length > 1 && (
+                    <button onClick={() => removerLinha(l.key)} className="text-gray-400 hover:text-red-600">
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <input
+                    className={inputCls}
+                    placeholder="Nome do produto"
+                    value={l.nome}
+                    onChange={(e) => atualizarLinha(l.key, "nome", e.target.value)}
+                  />
+                  <input
+                    className={inputCls}
+                    placeholder="Marca (opcional)"
+                    value={l.marca}
+                    onChange={(e) => atualizarLinha(l.key, "marca", e.target.value)}
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-2 items-end">
+                  <div>
+                    <div className="text-[11px] text-gray-400 mb-1">Custo do fornecedor (US$)</div>
+                    <input
+                      type="number"
+                      step="0.01"
+                      className={inputCls}
+                      value={l.custo}
+                      onChange={(e) => atualizarLinha(l.key, "custo", Number(e.target.value))}
+                    />
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-gray-400 mb-1">Margem</div>
+                    <div className="flex gap-1">
+                      <select
+                        className={`${inputCls} flex-1`}
+                        value={l.tipoMargem}
+                        onChange={(e) => atualizarLinha(l.key, "tipoMargem", e.target.value)}
+                      >
+                        <option value="percentual">%</option>
+                        <option value="valor">US$</option>
+                      </select>
+                      <input
+                        type="number"
+                        step="0.01"
+                        className={`${inputCls} flex-1`}
+                        value={l.valorMargem}
+                        onChange={(e) => atualizarLinha(l.key, "valorMargem", Number(e.target.value))}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-gray-400 mb-1">Preço de venda</div>
+                    <div className="text-sm font-semibold text-emerald-700 py-1.5">{fmtUSD(preco)}</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <button
+          type="button"
+          onClick={adicionarLinha}
+          className="w-full flex items-center justify-center gap-1.5 border border-emerald-800 text-emerald-800 hover:bg-emerald-50 rounded-md py-2 text-sm font-medium mb-4"
+        >
+          <Plus size={14} /> Adicionar outro produto
+        </button>
+
+        <button
+          onClick={importarTudo}
+          disabled={!podeImportar}
+          className="w-full bg-emerald-800 hover:bg-emerald-900 disabled:opacity-40 text-white rounded-md py-2 text-sm font-medium"
+        >
+          Importar {linhasValidas.length > 0 ? `${linhasValidas.length} ${linhasValidas.length === 1 ? "produto" : "produtos"}` : "produtos"} pro estoque
         </button>
       </Modal>
     );
@@ -3269,6 +3525,7 @@ export default function ColorShopDashboard() {
       {modal === "compra" && <CompraModal />}
       {modal === "movimento" && <MovimentoModal />}
       {modal === "item" && <ItemModal />}
+      {modal === "importarFornecedor" && <ImportarFornecedorModal />}
       {modal === "cliente" && <PessoaModal tipo="cliente" />}
       {modal === "fornecedor" && <PessoaModal tipo="fornecedor" />}
       {modal === "cambio" && <CambioModal />}
