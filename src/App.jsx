@@ -226,6 +226,47 @@ function PhotoLightbox({ src, nome, onClose }) {
   );
 }
 
+function PrecoEditavelCelula({ valor, onSave }) {
+  const [editando, setEditando] = useState(false);
+  const [temp, setTemp] = useState(valor);
+  useEffect(() => { setTemp(valor); }, [valor]);
+
+  function commit() {
+    const num = Number(temp);
+    setEditando(false);
+    if (!isNaN(num) && num >= 0 && num !== valor) onSave(num);
+    else setTemp(valor);
+  }
+
+  if (editando) {
+    return (
+      <input
+        type="number"
+        step="0.01"
+        autoFocus
+        className="w-20 border border-emerald-600 rounded px-1.5 py-0.5 text-sm focus:outline-none"
+        value={temp}
+        onChange={(e) => setTemp(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") { setTemp(valor); setEditando(false); }
+        }}
+        onClick={(e) => e.stopPropagation()}
+      />
+    );
+  }
+  return (
+    <button
+      onClick={() => setEditando(true)}
+      className="hover:bg-emerald-50 hover:text-emerald-700 rounded px-1.5 py-0.5 -mx-1.5 transition-colors"
+      title="Clique para editar"
+    >
+      {fmtUSD(valor)}
+    </button>
+  );
+}
+
 function Field({ label, children }) {
   return (
     <div className="mb-4">
@@ -1304,8 +1345,20 @@ export default function ColorShopDashboard() {
                   {i.sobEncomenda ? "Sob encomenda" : i.qtd}
                 </td>
                 <td className="px-5 py-3 text-gray-600">{fmtUSD(isAdmin ? i.custo : i.custoVendedor)}</td>
-                <td className="px-5 py-3 text-gray-600">{fmtUSD(i.varejo)}</td>
-                <td className="px-5 py-3 text-gray-600">{fmtUSD(i.atacado)}</td>
+                <td className="px-5 py-3 text-gray-600">
+                  {isAdmin ? (
+                    <PrecoEditavelCelula valor={i.varejo} onSave={(novo) => setEstoque((e) => e.map((x) => (x.id === i.id ? { ...x, varejo: novo } : x)))} />
+                  ) : (
+                    fmtUSD(i.varejo)
+                  )}
+                </td>
+                <td className="px-5 py-3 text-gray-600">
+                  {isAdmin ? (
+                    <PrecoEditavelCelula valor={i.atacado} onSave={(novo) => setEstoque((e) => e.map((x) => (x.id === i.id ? { ...x, atacado: novo } : x)))} />
+                  ) : (
+                    fmtUSD(i.atacado)
+                  )}
+                </td>
                 {isAdmin && <td className="px-5 py-3 text-gray-900 font-medium">{fmtUSD(i.qtd * i.custo)}</td>}
                 {isAdmin && (
                   <td className="px-5 py-3">
@@ -2899,31 +2952,57 @@ export default function ColorShopDashboard() {
       [estoque]
     );
 
+    function calcularPrecoLinha(custoUSD, tipo, valor) {
+      const margem = Number(valor) || 0;
+      if (tipo === "percentual") return custoUSD * (1 + margem / 100);
+      return custoUSD + margem;
+    }
+
     function analisarLista() {
       const parsed = parseListaFornecedor(textoColado);
       const comDados = parsed.map((p) => {
         const moedaFinal = forcarBRL ? "BRL" : p.moeda;
         const custoUSD = moedaFinal === "BRL" ? p.precoOriginal / (cambio.chacoCompra || 1) : p.precoOriginal;
         const jaExiste = nomesExistentes.has(p.nome.trim().toLowerCase());
+        const margemTipo = margemGlobalTipo;
+        const margemValor = margemGlobalValor;
         return {
           ...p,
           moeda: moedaFinal,
           custoUSD,
           jaExiste,
           incluir: !jaExiste,
+          margemTipo,
+          margemValor,
+          precoVenda: Number(calcularPrecoLinha(custoUSD, margemTipo, margemValor).toFixed(2)),
         };
       });
       setPreview(comDados);
     }
 
     function atualizarPreview(key, campo, valor) {
-      setPreview((ps) => ps.map((p) => (p.key === key ? { ...p, [campo]: valor } : p)));
+      setPreview((ps) =>
+        ps.map((p) => {
+          if (p.key !== key) return p;
+          const atualizado = { ...p, [campo]: valor };
+          // se mexeu na margem (tipo ou valor), recalcula o preço de venda dessa linha
+          if (campo === "margemTipo" || campo === "margemValor") {
+            atualizado.precoVenda = Number(calcularPrecoLinha(p.custoUSD, atualizado.margemTipo, atualizado.margemValor).toFixed(2));
+          }
+          return atualizado;
+        })
+      );
     }
 
-    function precoVendaPreview(p) {
-      const margem = Number(margemGlobalValor) || 0;
-      if (margemGlobalTipo === "percentual") return p.custoUSD * (1 + margem / 100);
-      return p.custoUSD + margem;
+    function aplicarMargemATodos() {
+      setPreview((ps) =>
+        ps.map((p) => ({
+          ...p,
+          margemTipo: margemGlobalTipo,
+          margemValor: margemGlobalValor,
+          precoVenda: Number(calcularPrecoLinha(p.custoUSD, margemGlobalTipo, margemGlobalValor).toFixed(2)),
+        }))
+      );
     }
 
     const fornecedorNome = fornecedores.find((f) => f.id === fornecedorId)?.nome || "";
