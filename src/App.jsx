@@ -3027,7 +3027,7 @@ export default function ColorShopDashboard() {
     function importarColado() {
       if (!podeImportarColado) return;
       const novosItens = previewIncluidos.map((p) => {
-        const preco = Number(precoVendaPreview(p).toFixed(2));
+        const preco = Number(p.precoVenda);
         const custoUSD = Number(p.custoUSD.toFixed(2));
         return {
           id: uid(), nome: p.nome, marca: p.marca, tipo: "", qtd: 0,
@@ -3115,9 +3115,9 @@ export default function ColorShopDashboard() {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 mb-3 border border-gray-200 rounded-lg p-3 bg-gray-50">
+                <div className="grid grid-cols-2 gap-3 mb-3 border border-gray-200 rounded-lg p-3 bg-gray-50 items-end">
                   <div>
-                    <div className="text-[11px] text-gray-400 mb-1">Margem de lucro (aplicada em todos)</div>
+                    <div className="text-[11px] text-gray-400 mb-1">Margem de lucro (padrão pra todos)</div>
                     <div className="flex gap-1">
                       <select className={`${inputCls} flex-1`} value={margemGlobalTipo} onChange={(e) => setMargemGlobalTipo(e.target.value)}>
                         <option value="percentual">%</option>
@@ -3132,6 +3132,16 @@ export default function ColorShopDashboard() {
                       />
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={aplicarMargemATodos}
+                    className="text-sm font-medium border border-emerald-800 text-emerald-800 hover:bg-emerald-50 rounded-md py-1.5"
+                  >
+                    Aplicar essa margem a todos os produtos
+                  </button>
+                </div>
+                <div className="text-xs text-gray-400 -mt-2 mb-3">
+                  Você também pode ajustar a margem de um produto individual clicando nele na tabela abaixo.
                 </div>
 
                 <div className="border border-gray-200 rounded-lg max-h-96 overflow-y-auto mb-4">
@@ -3176,7 +3186,15 @@ export default function ColorShopDashboard() {
                             {p.moeda === "BRL" ? fmtBRL(p.precoOriginal) : fmtUSD(p.precoOriginal)}
                           </td>
                           <td className="px-3 py-1.5 text-gray-500 whitespace-nowrap">{fmtUSD(p.custoUSD)}</td>
-                          <td className="px-3 py-1.5 font-medium text-emerald-700 whitespace-nowrap">{fmtUSD(precoVendaPreview(p))}</td>
+                          <td className="px-3 py-1.5 whitespace-nowrap">
+                            <input
+                              type="number"
+                              step="0.01"
+                              className="w-20 border border-gray-200 rounded px-1.5 py-0.5 font-medium text-emerald-700 focus:outline-none focus:ring-1 focus:ring-emerald-700"
+                              value={p.precoVenda}
+                              onChange={(e) => atualizarPreview(p.key, "precoVenda", Number(e.target.value))}
+                            />
+                          </td>
                           <td className="px-3 py-1.5 whitespace-nowrap">
                             {p.jaExiste ? (
                               <span className="text-amber-600">já existe</span>
