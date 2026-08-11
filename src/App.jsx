@@ -24,6 +24,43 @@ const LOGO_FULL = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBA
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 
+// Interpreta um texto colado (lista de fornecedor) e separa em produtos:
+// nome, marca (deduzida das linhas de cabeçalho), preço e moeda (BRL/USD)
+function parseListaFornecedor(texto) {
+  const linhas = (texto || "").split("\n");
+  const resultado = [];
+  let marcaAtual = "";
+  // pega o último número da linha, com moeda opcional logo depois (rs, r$, us$, usd, $)
+  const regexPreco = /([\d]+(?:[.,]\d+)?)\s*(rs|r\$|reais|us\$|usd|\$)?\s*$/i;
+
+  for (const linhaRaw of linhas) {
+    const linha = linhaRaw.trim();
+    if (!linha) continue;
+
+    const match = linha.match(regexPreco);
+    if (!match) {
+      // sem preço no final -> linha de cabeçalho/categoria, vira a "marca" das próximas linhas
+      const limpo = linha.replace(/[*🔥💊💪🏻💎—]+/g, "").replace(/-+$/, "").trim();
+      if (limpo) marcaAtual = limpo;
+      continue;
+    }
+
+    const precoStr = match[1].replace(",", ".");
+    const preco = parseFloat(precoStr);
+    if (!preco || preco <= 0) continue;
+
+    const moedaTxt = (match[2] || "").toLowerCase();
+    const moeda = moedaTxt.includes("rs") || moedaTxt.includes("r$") || moedaTxt.includes("reais") ? "BRL" : "USD";
+
+    let nome = linha.slice(0, match.index).trim();
+    nome = nome.replace(/[-:=]+\s*$/, "").trim();
+    if (!nome) continue;
+
+    resultado.push({ key: uid(), nome, marca: marcaAtual, precoOriginal: preco, moeda });
+  }
+  return resultado;
+}
+
 // Reads an image file, shrinks it and returns a compressed base64 (JPEG) string
 function readAndCompressImage(file, maxSize = 900, quality = 0.72) {
   return new Promise((resolve, reject) => {
@@ -1121,6 +1158,7 @@ export default function ColorShopDashboard() {
     const [busca, setBusca] = useState("");
     const [filtroMarca, setFiltroMarca] = useState("");
     const [filtroTipo, setFiltroTipo] = useState("");
+    const [abaFornecedor, setAbaFornecedor] = useState("todos"); // "todos" | "meuEstoque" | nome do fornecedor
 
     const marcas = useMemo(
       () => Array.from(new Set(estoque.map((i) => i.marca).filter(Boolean))).sort(),
@@ -1130,12 +1168,19 @@ export default function ColorShopDashboard() {
       () => Array.from(new Set(estoque.map((i) => i.tipo).filter(Boolean))).sort(),
       [estoque]
     );
+    const fornecedoresComProdutos = useMemo(
+      () => Array.from(new Set(estoque.filter((i) => i.sobEncomenda && i.fornecedorNome).map((i) => i.fornecedorNome))).sort(),
+      [estoque]
+    );
 
     const listaFiltrada = estoque.filter((i) => {
       const buscaOk = busca.trim() === "" || i.nome.toLowerCase().includes(busca.trim().toLowerCase());
       const marcaOk = filtroMarca === "" || i.marca === filtroMarca;
       const tipoOk = filtroTipo === "" || i.tipo === filtroTipo;
-      return buscaOk && marcaOk && tipoOk;
+      const abaOk =
+        abaFornecedor === "todos" ||
+        (abaFornecedor === "meuEstoque" ? !i.sobEncomenda : i.fornecedorNome === abaFornecedor);
+      return buscaOk && marcaOk && tipoOk && abaOk;
     });
 
     const valorCustoReal = useMemo(() => estoque.reduce((s, i) => s + i.qtd * i.custo, 0), [estoque]);
@@ -1151,6 +1196,31 @@ export default function ColorShopDashboard() {
             <StatCard label="ESTOQUE · CUSTO VENDEDOR" value={fmtUSD(valorCustoVendedor)} sub="Total pelo custo do vendedor" />
             <StatCard label="ESTOQUE · PREÇO VAREJO" value={fmtUSD(valorVarejo)} sub="Total se vendido no varejo" />
             <StatCard label="ESTOQUE · PREÇO ATACADO" value={fmtUSD(valorAtacado)} sub="Total se vendido no atacado" />
+          </div>
+        )}
+        {fornecedoresComProdutos.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-4">
+            <button
+              onClick={() => setAbaFornecedor("todos")}
+              className={`text-xs font-medium px-3 py-1.5 rounded-full border ${abaFornecedor === "todos" ? "bg-emerald-800 border-emerald-800 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
+            >
+              Tudo
+            </button>
+            <button
+              onClick={() => setAbaFornecedor("meuEstoque")}
+              className={`text-xs font-medium px-3 py-1.5 rounded-full border ${abaFornecedor === "meuEstoque" ? "bg-emerald-800 border-emerald-800 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
+            >
+              Meu estoque
+            </button>
+            {fornecedoresComProdutos.map((f) => (
+              <button
+                key={f}
+                onClick={() => setAbaFornecedor(f)}
+                className={`text-xs font-medium px-3 py-1.5 rounded-full border ${abaFornecedor === f ? "bg-amber-600 border-amber-600 text-white" : "border-amber-200 text-amber-700 hover:bg-amber-50"}`}
+              >
+                {f} *
+              </button>
+            ))}
           </div>
         )}
         <TableShell
@@ -2794,17 +2864,18 @@ export default function ColorShopDashboard() {
 
   function ImportarFornecedorModal() {
     const [fornecedorId, setFornecedorId] = useState(fornecedores[0]?.id || "");
+    const [modo, setModo] = useState("colar"); // "colar" | "manual"
+
+    // ---- modo manual (linha por linha) ----
     const [linhas, setLinhas] = useState([
       { key: uid(), nome: "", marca: "", custo: 0, tipoMargem: "percentual", valorMargem: 30 },
     ]);
-
     function calcularPreco(linha) {
       const custo = Number(linha.custo) || 0;
       const margem = Number(linha.valorMargem) || 0;
       if (linha.tipoMargem === "percentual") return custo * (1 + margem / 100);
       return custo + margem;
     }
-
     function atualizarLinha(key, campo, valor) {
       setLinhas((ls) => ls.map((l) => (l.key === key ? { ...l, [campo]: valor } : l)));
     }
@@ -2814,29 +2885,75 @@ export default function ColorShopDashboard() {
     function removerLinha(key) {
       setLinhas((ls) => (ls.length > 1 ? ls.filter((l) => l.key !== key) : ls));
     }
+    const linhasValidas = linhas.filter((l) => l.nome.trim() !== "" && Number(l.custo) > 0);
+
+    // ---- modo colar lista ----
+    const [textoColado, setTextoColado] = useState("");
+    const [forcarBRL, setForcarBRL] = useState(false);
+    const [margemGlobalTipo, setMargemGlobalTipo] = useState("percentual");
+    const [margemGlobalValor, setMargemGlobalValor] = useState(30);
+    const [preview, setPreview] = useState(null); // array de linhas analisadas, ou null antes de analisar
+
+    const nomesExistentes = useMemo(
+      () => new Set(estoque.map((i) => i.nome.trim().toLowerCase())),
+      [estoque]
+    );
+
+    function analisarLista() {
+      const parsed = parseListaFornecedor(textoColado);
+      const comDados = parsed.map((p) => {
+        const moedaFinal = forcarBRL ? "BRL" : p.moeda;
+        const custoUSD = moedaFinal === "BRL" ? p.precoOriginal / (cambio.chacoCompra || 1) : p.precoOriginal;
+        const jaExiste = nomesExistentes.has(p.nome.trim().toLowerCase());
+        return {
+          ...p,
+          moeda: moedaFinal,
+          custoUSD,
+          jaExiste,
+          incluir: !jaExiste,
+        };
+      });
+      setPreview(comDados);
+    }
+
+    function atualizarPreview(key, campo, valor) {
+      setPreview((ps) => ps.map((p) => (p.key === key ? { ...p, [campo]: valor } : p)));
+    }
+
+    function precoVendaPreview(p) {
+      const margem = Number(margemGlobalValor) || 0;
+      if (margemGlobalTipo === "percentual") return p.custoUSD * (1 + margem / 100);
+      return p.custoUSD + margem;
+    }
 
     const fornecedorNome = fornecedores.find((f) => f.id === fornecedorId)?.nome || "";
-    const linhasValidas = linhas.filter((l) => l.nome.trim() !== "" && Number(l.custo) > 0);
-    const podeImportar = fornecedorId && linhasValidas.length > 0;
+    const previewIncluidos = preview ? preview.filter((p) => p.incluir) : [];
+    const podeImportarManual = fornecedorId && linhasValidas.length > 0;
+    const podeImportarColado = fornecedorId && previewIncluidos.length > 0;
 
-    function importarTudo() {
-      if (!podeImportar) return;
+    function importarManual() {
+      if (!podeImportarManual) return;
       const novosItens = linhasValidas.map((l) => {
         const preco = Number(calcularPreco(l).toFixed(2));
         return {
-          id: uid(),
-          nome: l.nome.trim(),
-          marca: l.marca.trim(),
-          tipo: "",
-          qtd: 0,
-          custo: Number(l.custo),
-          custoVendedor: Number(l.custo),
-          varejo: preco,
-          atacado: preco,
-          min: 0,
-          sobEncomenda: true,
-          fornecedorNome,
-          foto: null,
+          id: uid(), nome: l.nome.trim(), marca: l.marca.trim(), tipo: "", qtd: 0,
+          custo: Number(l.custo), custoVendedor: Number(l.custo), varejo: preco, atacado: preco,
+          min: 0, sobEncomenda: true, fornecedorNome, foto: null,
+        };
+      });
+      setEstoque((e) => [...e, ...novosItens]);
+      setModal(null);
+    }
+
+    function importarColado() {
+      if (!podeImportarColado) return;
+      const novosItens = previewIncluidos.map((p) => {
+        const preco = Number(precoVendaPreview(p).toFixed(2));
+        const custoUSD = Number(p.custoUSD.toFixed(2));
+        return {
+          id: uid(), nome: p.nome, marca: p.marca, tipo: "", qtd: 0,
+          custo: custoUSD, custoVendedor: custoUSD, varejo: preco, atacado: preco,
+          min: 0, sobEncomenda: true, fornecedorNome, foto: null,
         };
       });
       setEstoque((e) => [...e, ...novosItens]);
@@ -2857,55 +2974,73 @@ export default function ColorShopDashboard() {
           </div>
         )}
         <div className="text-xs text-gray-400 mb-3">
-          Todos os produtos aqui entram como <span className="font-medium text-amber-600">sob encomenda</span> (com asterisco na lista de atacado) — não afeta seu estoque físico.
+          Todos os produtos entram como <span className="font-medium text-amber-600">sob encomenda</span> (com asterisco na lista de atacado) — não afeta seu estoque físico.
         </div>
 
-        <div className="space-y-3 mb-4 max-h-96 overflow-y-auto pr-1">
-          {linhas.map((l, idx) => {
-            const preco = calcularPreco(l);
-            return (
-              <div key={l.key} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-xs font-medium text-gray-500">Produto {idx + 1}</div>
-                  {linhas.length > 1 && (
-                    <button onClick={() => removerLinha(l.key)} className="text-gray-400 hover:text-red-600">
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                </div>
-                <div className="grid grid-cols-2 gap-2 mb-2">
-                  <input
-                    className={inputCls}
-                    placeholder="Nome do produto"
-                    value={l.nome}
-                    onChange={(e) => atualizarLinha(l.key, "nome", e.target.value)}
+        <div className="flex gap-2 mb-4 border-b border-gray-200">
+          <button
+            onClick={() => setModo("colar")}
+            className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px ${modo === "colar" ? "border-emerald-800 text-emerald-800" : "border-transparent text-gray-400"}`}
+          >
+            Colar lista completa
+          </button>
+          <button
+            onClick={() => setModo("manual")}
+            className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px ${modo === "manual" ? "border-emerald-800 text-emerald-800" : "border-transparent text-gray-400"}`}
+          >
+            Adicionar manualmente
+          </button>
+        </div>
+
+        {modo === "colar" && (
+          <>
+            {!preview ? (
+              <>
+                <Field label="Cole aqui a lista inteira do fornecedor">
+                  <textarea
+                    className={`${inputCls} font-mono text-xs`}
+                    rows={10}
+                    value={textoColado}
+                    onChange={(e) => setTextoColado(e.target.value)}
+                    placeholder={"Ex:\nTg 15mg- 435 rs\nLipo Biotidina:145 rs\n🔥LANDER🔥\nDURATESTON-90rs"}
                   />
-                  <input
-                    className={inputCls}
-                    placeholder="Marca (opcional)"
-                    value={l.marca}
-                    onChange={(e) => atualizarLinha(l.key, "marca", e.target.value)}
-                  />
+                </Field>
+                <div className="text-xs text-gray-400 -mt-2 mb-3">
+                  O sistema detecta nome e preço de cada linha automaticamente. Linhas sem preço (títulos, nomes de marca) viram a "marca" dos produtos seguintes.
                 </div>
-                <div className="grid grid-cols-3 gap-2 items-end">
-                  <div>
-                    <div className="text-[11px] text-gray-400 mb-1">Custo do fornecedor (US$)</div>
-                    <input
-                      type="number"
-                      step="0.01"
-                      className={inputCls}
-                      value={l.custo}
-                      onChange={(e) => atualizarLinha(l.key, "custo", Number(e.target.value))}
-                    />
+                <label className="flex items-center gap-2 text-sm text-gray-700 mb-3 cursor-pointer">
+                  <input type="checkbox" checked={forcarBRL} onChange={(e) => setForcarBRL(e.target.checked)} className="rounded" />
+                  Forçar todos os preços como reais (mesmo sem "rs" no final da linha)
+                </label>
+                <div className="text-xs text-gray-400 mb-3">
+                  Câmbio de compra usado na conversão: <span className="font-medium text-gray-600">{fmtBRL(cambio.chacoCompra)}/US$</span> (ajustável na aba Câmbio)
+                </div>
+                <button
+                  type="button"
+                  onClick={analisarLista}
+                  disabled={!textoColado.trim()}
+                  className="w-full bg-emerald-800 hover:bg-emerald-900 disabled:opacity-40 text-white rounded-md py-2 text-sm font-medium"
+                >
+                  Analisar lista
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-sm text-gray-600">
+                    {preview.length} produtos encontrados · {previewIncluidos.length} serão importados
+                    {preview.length - previewIncluidos.length > 0 && ` (${preview.length - previewIncluidos.length} já existem no seu estoque)`}
                   </div>
+                  <button onClick={() => setPreview(null)} className="text-xs text-gray-400 hover:text-gray-600 underline">
+                    ← Colar outra lista
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 mb-3 border border-gray-200 rounded-lg p-3 bg-gray-50">
                   <div>
-                    <div className="text-[11px] text-gray-400 mb-1">Margem</div>
+                    <div className="text-[11px] text-gray-400 mb-1">Margem de lucro (aplicada em todos)</div>
                     <div className="flex gap-1">
-                      <select
-                        className={`${inputCls} flex-1`}
-                        value={l.tipoMargem}
-                        onChange={(e) => atualizarLinha(l.key, "tipoMargem", e.target.value)}
-                      >
+                      <select className={`${inputCls} flex-1`} value={margemGlobalTipo} onChange={(e) => setMargemGlobalTipo(e.target.value)}>
                         <option value="percentual">%</option>
                         <option value="valor">US$</option>
                       </select>
@@ -2913,36 +3048,168 @@ export default function ColorShopDashboard() {
                         type="number"
                         step="0.01"
                         className={`${inputCls} flex-1`}
-                        value={l.valorMargem}
-                        onChange={(e) => atualizarLinha(l.key, "valorMargem", Number(e.target.value))}
+                        value={margemGlobalValor}
+                        onChange={(e) => setMargemGlobalValor(Number(e.target.value))}
                       />
                     </div>
                   </div>
-                  <div>
-                    <div className="text-[11px] text-gray-400 mb-1">Preço de venda</div>
-                    <div className="text-sm font-semibold text-emerald-700 py-1.5">{fmtUSD(preco)}</div>
-                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
 
-        <button
-          type="button"
-          onClick={adicionarLinha}
-          className="w-full flex items-center justify-center gap-1.5 border border-emerald-800 text-emerald-800 hover:bg-emerald-50 rounded-md py-2 text-sm font-medium mb-4"
-        >
-          <Plus size={14} /> Adicionar outro produto
-        </button>
+                <div className="border border-gray-200 rounded-lg max-h-96 overflow-y-auto mb-4">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-white">
+                      <tr className="text-left text-[10px] tracking-wide text-gray-400 border-b border-gray-100">
+                        <th className="px-3 py-2 font-medium">✓</th>
+                        <th className="px-3 py-2 font-medium">NOME</th>
+                        <th className="px-3 py-2 font-medium">MARCA</th>
+                        <th className="px-3 py-2 font-medium">PREÇO ORIGINAL</th>
+                        <th className="px-3 py-2 font-medium">CUSTO US$</th>
+                        <th className="px-3 py-2 font-medium">VENDA US$</th>
+                        <th className="px-3 py-2 font-medium">STATUS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.map((p) => (
+                        <tr key={p.key} className={`border-b border-gray-50 ${!p.incluir ? "opacity-40" : ""}`}>
+                          <td className="px-3 py-1.5">
+                            <input
+                              type="checkbox"
+                              checked={p.incluir}
+                              onChange={(e) => atualizarPreview(p.key, "incluir", e.target.checked)}
+                              className="rounded"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <input
+                              className="w-full border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-emerald-700 rounded px-1"
+                              value={p.nome}
+                              onChange={(e) => atualizarPreview(p.key, "nome", e.target.value)}
+                            />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <input
+                              className="w-full border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-emerald-700 rounded px-1"
+                              value={p.marca}
+                              onChange={(e) => atualizarPreview(p.key, "marca", e.target.value)}
+                            />
+                          </td>
+                          <td className="px-3 py-1.5 text-gray-500 whitespace-nowrap">
+                            {p.moeda === "BRL" ? fmtBRL(p.precoOriginal) : fmtUSD(p.precoOriginal)}
+                          </td>
+                          <td className="px-3 py-1.5 text-gray-500 whitespace-nowrap">{fmtUSD(p.custoUSD)}</td>
+                          <td className="px-3 py-1.5 font-medium text-emerald-700 whitespace-nowrap">{fmtUSD(precoVendaPreview(p))}</td>
+                          <td className="px-3 py-1.5 whitespace-nowrap">
+                            {p.jaExiste ? (
+                              <span className="text-amber-600">já existe</span>
+                            ) : (
+                              <span className="text-emerald-600">novo</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
 
-        <button
-          onClick={importarTudo}
-          disabled={!podeImportar}
-          className="w-full bg-emerald-800 hover:bg-emerald-900 disabled:opacity-40 text-white rounded-md py-2 text-sm font-medium"
-        >
-          Importar {linhasValidas.length > 0 ? `${linhasValidas.length} ${linhasValidas.length === 1 ? "produto" : "produtos"}` : "produtos"} pro estoque
-        </button>
+                <button
+                  onClick={importarColado}
+                  disabled={!podeImportarColado}
+                  className="w-full bg-emerald-800 hover:bg-emerald-900 disabled:opacity-40 text-white rounded-md py-2 text-sm font-medium"
+                >
+                  Importar {previewIncluidos.length} {previewIncluidos.length === 1 ? "produto" : "produtos"} pro estoque
+                </button>
+              </>
+            )}
+          </>
+        )}
+
+        {modo === "manual" && (
+          <>
+            <div className="space-y-3 mb-4 max-h-96 overflow-y-auto pr-1">
+              {linhas.map((l, idx) => {
+                const preco = calcularPreco(l);
+                return (
+                  <div key={l.key} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs font-medium text-gray-500">Produto {idx + 1}</div>
+                      {linhas.length > 1 && (
+                        <button onClick={() => removerLinha(l.key)} className="text-gray-400 hover:text-red-600">
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      <input
+                        className={inputCls}
+                        placeholder="Nome do produto"
+                        value={l.nome}
+                        onChange={(e) => atualizarLinha(l.key, "nome", e.target.value)}
+                      />
+                      <input
+                        className={inputCls}
+                        placeholder="Marca (opcional)"
+                        value={l.marca}
+                        onChange={(e) => atualizarLinha(l.key, "marca", e.target.value)}
+                      />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 items-end">
+                      <div>
+                        <div className="text-[11px] text-gray-400 mb-1">Custo do fornecedor (US$)</div>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className={inputCls}
+                          value={l.custo}
+                          onChange={(e) => atualizarLinha(l.key, "custo", Number(e.target.value))}
+                        />
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-gray-400 mb-1">Margem</div>
+                        <div className="flex gap-1">
+                          <select
+                            className={`${inputCls} flex-1`}
+                            value={l.tipoMargem}
+                            onChange={(e) => atualizarLinha(l.key, "tipoMargem", e.target.value)}
+                          >
+                            <option value="percentual">%</option>
+                            <option value="valor">US$</option>
+                          </select>
+                          <input
+                            type="number"
+                            step="0.01"
+                            className={`${inputCls} flex-1`}
+                            value={l.valorMargem}
+                            onChange={(e) => atualizarLinha(l.key, "valorMargem", Number(e.target.value))}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-gray-400 mb-1">Preço de venda</div>
+                        <div className="text-sm font-semibold text-emerald-700 py-1.5">{fmtUSD(preco)}</div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              type="button"
+              onClick={adicionarLinha}
+              className="w-full flex items-center justify-center gap-1.5 border border-emerald-800 text-emerald-800 hover:bg-emerald-50 rounded-md py-2 text-sm font-medium mb-4"
+            >
+              <Plus size={14} /> Adicionar outro produto
+            </button>
+
+            <button
+              onClick={importarManual}
+              disabled={!podeImportarManual}
+              className="w-full bg-emerald-800 hover:bg-emerald-900 disabled:opacity-40 text-white rounded-md py-2 text-sm font-medium"
+            >
+              Importar {linhasValidas.length > 0 ? `${linhasValidas.length} ${linhasValidas.length === 1 ? "produto" : "produtos"}` : "produtos"} pro estoque
+            </button>
+          </>
+        )}
       </Modal>
     );
   }
