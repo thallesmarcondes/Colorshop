@@ -39,8 +39,9 @@ function parseListaFornecedor(texto) {
     if (!linha) continue;
 
     const match = linha.match(regexPreco);
-    if (!match) {
-      // sem preço no final -> linha de cabeçalho/categoria, vira a "marca" das próximas linhas
+    if (!match || (!match[1] && !match[3])) {
+      // sem preço válido no final (precisa ter moeda — rs, $, US$...) -> linha de cabeçalho/categoria,
+      // vira a "marca" das próximas linhas
       const limpo = linha.replace(/[*🔥💊💪🏻💎—💉🧬🖊️]+/g, "").replace(/-+$/, "").trim();
       if (limpo) marcaAtual = limpo;
       continue;
@@ -53,11 +54,26 @@ function parseListaFornecedor(texto) {
     const moedaTxt = ((match[1] || "") + (match[3] || "")).toLowerCase();
     const moeda = moedaTxt.includes("rs") || moedaTxt.includes("r$") || moedaTxt.includes("reais") ? "BRL" : "USD";
 
-    let nome = linha.slice(0, match.index).trim();
-    nome = nome.replace(/[-:=—]+\s*$/, "").trim();
+    let nomeETipo = linha.slice(0, match.index).trim();
+    let nome = nomeETipo;
+    let tipo = "";
+    // formato novo: "Nome — Tipo -- Preço" (o "--" antes do preço indica que tem um tipo no meio)
+    if (/--\s*$/.test(nomeETipo)) {
+      const semTraco = nomeETipo.replace(/--\s*$/, "").trim();
+      const idxEmDash = semTraco.lastIndexOf("—");
+      if (idxEmDash !== -1) {
+        nome = semTraco.slice(0, idxEmDash).trim();
+        tipo = semTraco.slice(idxEmDash + 1).trim();
+      } else {
+        nome = semTraco;
+      }
+    } else {
+      // formato antigo: "Nome — Preço" (sem tipo) — só limpa os separadores do final
+      nome = nomeETipo.replace(/[-:=—]+\s*$/, "").trim();
+    }
     if (!nome) continue;
 
-    resultado.push({ key: uid(), nome, marca: marcaAtual, precoOriginal: preco, moeda });
+    resultado.push({ key: uid(), nome, marca: marcaAtual, tipo, precoOriginal: preco, moeda });
   }
   return resultado;
 }
@@ -939,22 +955,45 @@ export default function ColorShopDashboard() {
     });
 
     const disponiveis = base.filter((i) => i.qtd > 0 && !i.sobEncomenda).sort((a, b) => a.nome.localeCompare(b.nome));
-    const grupos = {};
-    disponiveis.forEach((i) => {
-      const chave = i.marca || "Sem marca";
-      if (!grupos[chave]) grupos[chave] = [];
-      grupos[chave].push(i);
-    });
-    const marcasOrdenadas = Object.keys(grupos).sort((a, b) => {
-      if (a === "Sem marca") return 1;
-      if (b === "Sem marca") return -1;
-      return a.localeCompare(b);
-    });
-    const blocos = marcasOrdenadas.flatMap((m) => [
-      `*${m.toUpperCase()}*`,
-      ...grupos[m].map((i) => `• ${i.nome} — ${fmtUSD(i.atacado)}`),
-      "",
-    ]);
+
+    let blocos;
+    if (marca) {
+      // filtrando por UMA marca só -> agrupa os produtos por TIPO
+      const gruposTipo = {};
+      disponiveis.forEach((i) => {
+        const chave = i.tipo || "Outros";
+        if (!gruposTipo[chave]) gruposTipo[chave] = [];
+        gruposTipo[chave].push(i);
+      });
+      const tiposOrdenados = Object.keys(gruposTipo).sort((a, b) => {
+        if (a === "Outros") return 1;
+        if (b === "Outros") return -1;
+        return a.localeCompare(b);
+      });
+      blocos = tiposOrdenados.flatMap((t) => [
+        `*${t.toUpperCase()}*`,
+        ...gruposTipo[t].map((i) => `• ${i.nome} — ${fmtUSD(i.atacado)}`),
+        "",
+      ]);
+    } else {
+      // lista completa (ou filtrada só por tipo) -> agrupa por MARCA, como sempre foi
+      const grupos = {};
+      disponiveis.forEach((i) => {
+        const chave = i.marca || "Sem marca";
+        if (!grupos[chave]) grupos[chave] = [];
+        grupos[chave].push(i);
+      });
+      const marcasOrdenadas = Object.keys(grupos).sort((a, b) => {
+        if (a === "Sem marca") return 1;
+        if (b === "Sem marca") return -1;
+        return a.localeCompare(b);
+      });
+      blocos = marcasOrdenadas.flatMap((m) => [
+        `*${m.toUpperCase()}*`,
+        ...grupos[m].map((i) => `• ${i.nome} — ${fmtUSD(i.atacado)}`),
+        "",
+      ]);
+    }
 
     const sobEncomenda = base.filter((i) => i.sobEncomenda).sort((a, b) => a.nome.localeCompare(b.nome));
     const blocoEncomenda = sobEncomenda.length
@@ -1341,16 +1380,21 @@ export default function ColorShopDashboard() {
         title="Estoque"
         sub={`${listaFiltrada.length} de ${estoque.length} mercadorias · ${unidadesEstoque} unidades`}
         action={
-          isAdmin && (
-            <div className="flex items-center gap-2">
-              <button onClick={() => setModal("importarFornecedor")} className="flex items-center gap-1.5 text-sm font-medium border border-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-50">
-                <List size={14} /> Importar lista de fornecedor
-              </button>
-              <button onClick={() => { setEditingItem(null); setModal("item"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
-                <Plus size={14} /> Novo item
-              </button>
-            </div>
-          )
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={() => setListaAtacadoFone(null)} className="flex items-center gap-1.5 text-sm font-medium border border-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-50">
+              <Copy size={14} /> Copiar/enviar lista
+            </button>
+            {isAdmin && (
+              <>
+                <button onClick={() => setModal("importarFornecedor")} className="flex items-center gap-1.5 text-sm font-medium border border-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-50">
+                  <List size={14} /> Importar lista de fornecedor
+                </button>
+                <button onClick={() => { setEditingItem(null); setModal("item"); }} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
+                  <Plus size={14} /> Novo item
+                </button>
+              </>
+            )}
+          </div>
         }
       >
         <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-gray-100 bg-gray-50/50">
@@ -2026,9 +2070,14 @@ export default function ColorShopDashboard() {
         title="Orçamentos"
         sub={`${orcamentos.length} orçamentos`}
         action={
-          <button onClick={() => setModal("orcamento")} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
-            <Plus size={14} /> Novo orçamento
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={() => setListaAtacadoFone(null)} className="flex items-center gap-1.5 text-sm font-medium border border-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-50">
+              <Copy size={14} /> Copiar/enviar lista
+            </button>
+            <button onClick={() => setModal("orcamento")} className="flex items-center gap-1.5 text-sm font-medium bg-emerald-800 hover:bg-emerald-900 text-white rounded-md px-3 py-1.5">
+              <Plus size={14} /> Novo orçamento
+            </button>
+          </div>
         }
       >
         <table className="w-full text-sm">
