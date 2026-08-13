@@ -126,19 +126,14 @@ const STORAGE_KEYS = {
 };
 
 async function loadKey(key, fallback) {
-  try {
-    const { data, error } = await supabase
-      .from("app_data")
-      .select("value")
-      .eq("key", key)
-      .maybeSingle();
-    if (error) throw error;
-    if (data && data.value != null) return data.value;
-    return fallback;
-  } catch (e) {
-    console.error("Falha ao carregar", key, e);
-    return fallback;
-  }
+  const { data, error } = await supabase
+    .from("app_data")
+    .select("value")
+    .eq("key", key)
+    .maybeSingle();
+  if (error) throw error; // não engole erro — quem chamou precisa saber que a carga falhou
+  if (data && data.value != null) return data.value;
+  return fallback;
 }
 async function saveKey(key, value) {
   try {
@@ -285,6 +280,8 @@ export default function ColorShopDashboard() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [lightbox, setLightbox] = useState(null);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [saveError, setSaveError] = useState(false);
 
   const [estoque, setEstoque] = useState(DEFAULTS.estoque);
@@ -320,79 +317,91 @@ export default function ColorShopDashboard() {
   // ---- load from persistent storage on mount ----
   useEffect(() => {
     (async () => {
-      const { data: estoqueCheck } = await supabase
-        .from("app_data")
-        .select("key")
-        .eq("key", STORAGE_KEYS.estoque)
-        .maybeSingle();
-      const isFirstRun = estoqueCheck == null;
-
-      const [est, ven, comp, pes, cx, cam, cts, usr, orc] = await Promise.all([
-        loadKey(STORAGE_KEYS.estoque, DEFAULTS.estoque),
-        loadKey(STORAGE_KEYS.vendas, DEFAULTS.vendas),
-        loadKey(STORAGE_KEYS.compras, DEFAULTS.compras),
-        loadKey(STORAGE_KEYS.pessoas, DEFAULTS.pessoas),
-        loadKey(STORAGE_KEYS.caixa, DEFAULTS.caixa),
-        loadKey(STORAGE_KEYS.cambio, DEFAULTS.cambio),
-        loadKey(STORAGE_KEYS.contas, DEFAULTS.contas),
-        loadKey(STORAGE_KEYS.usuarios, DEFAULTS.usuarios),
-        loadKey(STORAGE_KEYS.orcamentos, DEFAULTS.orcamentos),
-      ]);
-      const estMigrado = (est || []).map((i) => {
-        let x = i;
-        if (x.varejo === undefined || x.atacado === undefined) {
-          x = { ...x, varejo: x.varejo ?? x.venda ?? x.custo * 1.3, atacado: x.atacado ?? x.venda ?? x.custo * 1.15 };
-        }
-        if (x.custoVendedor === undefined) {
-          x = { ...x, custoVendedor: x.custo };
-        }
-        return x;
-      });
-      setEstoque(estMigrado);
-      const venMigrado = (ven || []).map((v) =>
-        v.itens ? v : { ...v, itens: [{ itemId: v.itemId || uid(), itemNome: v.itemNome, qtd: v.qtd, tipoVenda: v.tipoVenda, precoUnit: v.qtd ? v.valor / v.qtd : v.valor, subtotal: v.valor }] }
-      );
-      setVendas(venMigrado);
-      const compMigrado = (comp || []).map((c) =>
-        c.itens ? c : { ...c, itens: [{ nome: c.itemNome, qtd: c.qtd, custo: c.qtd ? c.total / c.qtd : c.total, subtotal: c.total }] }
-      );
-      setCompras(compMigrado);
-      setClientes(pes.clientes || []);
-      setFornecedores(pes.fornecedores || []);
-      setCaixas(cx.caixas || DEFAULTS.caixa.caixas);
-      setMovimentos(cx.movimentos || []);
-      setCambio(cam);
-      setContas(cts || []);
-      setUsuarios(usr && usr.length ? usr : DEFAULTS.usuarios);
-      setOrcamentos(orc || []);
-
-      // persist defaults on very first run so the keys exist going forward
-      if (isFirstRun) {
-        saveKey(STORAGE_KEYS.estoque, est);
-        saveKey(STORAGE_KEYS.vendas, ven);
-        saveKey(STORAGE_KEYS.compras, comp);
-        saveKey(STORAGE_KEYS.pessoas, { clientes: pes.clientes, fornecedores: pes.fornecedores });
-        saveKey(STORAGE_KEYS.caixa, { caixas: cx.caixas, movimentos: cx.movimentos });
-        saveKey(STORAGE_KEYS.cambio, cam);
-        saveKey(STORAGE_KEYS.contas, cts);
-        saveKey(STORAGE_KEYS.usuarios, usr);
-        saveKey(STORAGE_KEYS.orcamentos, orc);
-      }
-
-      // restore session (per-tab, so a refresh doesn't force re-login, but closing the tab does)
+      setLoadError(null);
       try {
-        const savedSession = window.sessionStorage.getItem("nexo-session");
-        if (savedSession) {
-          const sessUserId = JSON.parse(savedSession).id;
-          const found = (usr && usr.length ? usr : DEFAULTS.usuarios).find((u) => u.id === sessUserId);
-          if (found) setAuthUser(found);
-        }
-      } catch (e) {}
+        const { data: estoqueCheck, error: checkError } = await supabase
+          .from("app_data")
+          .select("key")
+          .eq("key", STORAGE_KEYS.estoque)
+          .maybeSingle();
+        if (checkError) throw checkError;
+        const isFirstRun = estoqueCheck == null;
 
-      setLoaded(true);
-      setAuthChecked(true);
+        const [est, ven, comp, pes, cx, cam, cts, usr, orc] = await Promise.all([
+          loadKey(STORAGE_KEYS.estoque, DEFAULTS.estoque),
+          loadKey(STORAGE_KEYS.vendas, DEFAULTS.vendas),
+          loadKey(STORAGE_KEYS.compras, DEFAULTS.compras),
+          loadKey(STORAGE_KEYS.pessoas, DEFAULTS.pessoas),
+          loadKey(STORAGE_KEYS.caixa, DEFAULTS.caixa),
+          loadKey(STORAGE_KEYS.cambio, DEFAULTS.cambio),
+          loadKey(STORAGE_KEYS.contas, DEFAULTS.contas),
+          loadKey(STORAGE_KEYS.usuarios, DEFAULTS.usuarios),
+          loadKey(STORAGE_KEYS.orcamentos, DEFAULTS.orcamentos),
+        ]);
+        const estMigrado = (est || []).map((i) => {
+          let x = i;
+          if (x.varejo === undefined || x.atacado === undefined) {
+            x = { ...x, varejo: x.varejo ?? x.venda ?? x.custo * 1.3, atacado: x.atacado ?? x.venda ?? x.custo * 1.15 };
+          }
+          if (x.custoVendedor === undefined) {
+            x = { ...x, custoVendedor: x.custo };
+          }
+          return x;
+        });
+        setEstoque(estMigrado);
+        const venMigrado = (ven || []).map((v) =>
+          v.itens ? v : { ...v, itens: [{ itemId: v.itemId || uid(), itemNome: v.itemNome, qtd: v.qtd, tipoVenda: v.tipoVenda, precoUnit: v.qtd ? v.valor / v.qtd : v.valor, subtotal: v.valor }] }
+        );
+        setVendas(venMigrado);
+        const compMigrado = (comp || []).map((c) =>
+          c.itens ? c : { ...c, itens: [{ nome: c.itemNome, qtd: c.qtd, custo: c.qtd ? c.total / c.qtd : c.total, subtotal: c.total }] }
+        );
+        setCompras(compMigrado);
+        setClientes(pes.clientes || []);
+        setFornecedores(pes.fornecedores || []);
+        setCaixas(cx.caixas || DEFAULTS.caixa.caixas);
+        setMovimentos(cx.movimentos || []);
+        setCambio(cam);
+        setContas(cts || []);
+        setUsuarios(usr && usr.length ? usr : DEFAULTS.usuarios);
+        setOrcamentos(orc || []);
+
+        // persist defaults on very first run so the keys exist going forward
+        // (só roda quando temos CERTEZA de que a chave não existe — nunca em cima de um erro de leitura)
+        if (isFirstRun) {
+          saveKey(STORAGE_KEYS.estoque, est);
+          saveKey(STORAGE_KEYS.vendas, ven);
+          saveKey(STORAGE_KEYS.compras, comp);
+          saveKey(STORAGE_KEYS.pessoas, { clientes: pes.clientes, fornecedores: pes.fornecedores });
+          saveKey(STORAGE_KEYS.caixa, { caixas: cx.caixas, movimentos: cx.movimentos });
+          saveKey(STORAGE_KEYS.cambio, cam);
+          saveKey(STORAGE_KEYS.contas, cts);
+          saveKey(STORAGE_KEYS.usuarios, usr);
+          saveKey(STORAGE_KEYS.orcamentos, orc);
+        }
+
+        // restore session (per-tab, so a refresh doesn't force re-login, but closing the tab does)
+        try {
+          const savedSession = window.sessionStorage.getItem("nexo-session");
+          if (savedSession) {
+            const sessUserId = JSON.parse(savedSession).id;
+            const found = (usr && usr.length ? usr : DEFAULTS.usuarios).find((u) => u.id === sessUserId);
+            if (found) setAuthUser(found);
+          }
+        } catch (e) {}
+
+        setLoaded(true);
+        setAuthChecked(true);
+      } catch (e) {
+        // qualquer falha aqui é tratada como erro fatal de carregamento — NUNCA seguimos
+        // pra tela do sistema com dados incompletos, porque isso ligaria o salvamento
+        // automático e gravaria dados vazios/errados por cima do banco real.
+        console.error("Erro ao carregar dados do sistema", e);
+        setLoadError(e);
+        setAuthChecked(true);
+      }
     })();
-  }, []);
+  }, [loadAttempt]);
 
   // ---- persist on change (skip until initial load finishes) ----
   useEffect(() => { if (loaded) saveKey(STORAGE_KEYS.estoque, estoque); }, [estoque, loaded]);
@@ -3921,6 +3930,28 @@ export default function ColorShopDashboard() {
     cambio: <CambioPage />,
     vendedores: <VendedoresPage />,
   };
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4" style={{ fontFamily: "Inter, system-ui, sans-serif" }}>
+        <div className="max-w-sm w-full bg-white border border-red-100 rounded-xl p-6 text-center">
+          <div className="w-10 h-10 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto mb-3">
+            <X size={18} />
+          </div>
+          <div className="text-sm font-semibold text-gray-900 mb-1">Não foi possível carregar seus dados</div>
+          <div className="text-xs text-gray-500 mb-4">
+            Isso normalmente é uma instabilidade rápida de conexão. Nada foi apagado — o sistema não grava nada até conseguir carregar tudo certinho. Verifique sua internet e tente de novo.
+          </div>
+          <button
+            onClick={() => setLoadAttempt((n) => n + 1)}
+            className="w-full bg-emerald-800 hover:bg-emerald-900 text-white rounded-md py-2 text-sm font-medium"
+          >
+            Tentar novamente
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!authChecked || !loaded) {
     return (
