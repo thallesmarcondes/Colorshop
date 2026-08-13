@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   LayoutGrid, ArrowUpRight, ArrowDownLeft, Wallet, Users, Truck,
   RefreshCw, Plus, X, Trash2, Search, Download, Home, Loader2, Pencil, Receipt, Check, Copy,
@@ -110,6 +110,7 @@ const NAV = [
   { key: "fornecedores", label: "Fornecedores", icon: Truck, roles: ["admin"] },
   { key: "cambio", label: "Câmbio", icon: RefreshCw, roles: ["admin"] },
   { key: "vendedores", label: "Vendedores", icon: UserCog, roles: ["admin"] },
+  { key: "backups", label: "Backups automáticos", icon: Download, roles: ["admin"] },
 ];
 
 // ---- storage helpers ----
@@ -413,6 +414,40 @@ export default function ColorShopDashboard() {
   useEffect(() => { if (loaded) saveKey(STORAGE_KEYS.contas, contas); }, [contas, loaded]);
   useEffect(() => { if (loaded) saveKey(STORAGE_KEYS.usuarios, usuarios); }, [usuarios, loaded]);
   useEffect(() => { if (loaded) saveKey(STORAGE_KEYS.orcamentos, orcamentos); }, [orcamentos, loaded]);
+
+  // ---- backup automático: salva uma cópia completa pouco depois de qualquer mudança real
+  // (venda, orçamento, produto, cliente, etc.), agrupando alterações rápidas numa só gravação ----
+  const backupTimerRef = useRef(null);
+  useEffect(() => {
+    if (!loaded) return;
+    if (backupTimerRef.current) clearTimeout(backupTimerRef.current);
+    backupTimerRef.current = setTimeout(async () => {
+      try {
+        await supabase.from("backups_indufarma").insert({
+          dados: {
+            estoque, vendas, compras,
+            pessoas: { clientes, fornecedores },
+            caixa: { caixas, movimentos },
+            cambio, contas, usuarios, orcamentos,
+          },
+          qtd_produtos: estoque.length,
+        });
+        // mantém só os últimos 50 backups, pra não crescer sem limite
+        const { data: antigos } = await supabase
+          .from("backups_indufarma")
+          .select("id")
+          .order("criado_em", { ascending: false })
+          .range(50, 999);
+        if (antigos && antigos.length) {
+          await supabase.from("backups_indufarma").delete().in("id", antigos.map((a) => a.id));
+        }
+      } catch (e) {
+        console.error("Falha ao criar backup automático", e);
+      }
+    }, 6000);
+    return () => clearTimeout(backupTimerRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [estoque, vendas, compras, clientes, fornecedores, caixas, movimentos, cambio, contas, usuarios, orcamentos, loaded]);
 
   function login(usuario, senha) {
     const found = usuarios.find((u) => u.usuario.toLowerCase() === usuario.trim().toLowerCase() && u.senha === senha);
@@ -3794,6 +3829,89 @@ export default function ColorShopDashboard() {
     URL.revokeObjectURL(url);
   }
 
+  function BackupsPage() {
+    const [lista, setLista] = useState(null); // null = carregando
+    const [restaurando, setRestaurando] = useState(null);
+
+    useEffect(() => {
+      (async () => {
+        const { data } = await supabase
+          .from("backups_indufarma")
+          .select("id, qtd_produtos, criado_em")
+          .order("criado_em", { ascending: false })
+          .limit(30);
+        setLista(data || []);
+      })();
+    }, []);
+
+    async function restaurar(id) {
+      if (!window.confirm("Isso vai SUBSTITUIR os dados atuais (estoque, vendas, clientes, tudo) pelos deste backup. Essa ação não pode ser desfeita. Confirma?")) return;
+      setRestaurando(id);
+      try {
+        const { data } = await supabase.from("backups_indufarma").select("dados").eq("id", id).maybeSingle();
+        if (!data) return;
+        const d = data.dados;
+        await Promise.all([
+          saveKey(STORAGE_KEYS.estoque, d.estoque || []),
+          saveKey(STORAGE_KEYS.vendas, d.vendas || []),
+          saveKey(STORAGE_KEYS.compras, d.compras || []),
+          saveKey(STORAGE_KEYS.pessoas, d.pessoas || { clientes: [], fornecedores: [] }),
+          saveKey(STORAGE_KEYS.caixa, d.caixa || { caixas: DEFAULTS.caixa.caixas, movimentos: [] }),
+          saveKey(STORAGE_KEYS.cambio, d.cambio || DEFAULTS.cambio),
+          saveKey(STORAGE_KEYS.contas, d.contas || []),
+          saveKey(STORAGE_KEYS.usuarios, d.usuarios || DEFAULTS.usuarios),
+          saveKey(STORAGE_KEYS.orcamentos, d.orcamentos || []),
+        ]);
+        alert("Backup restaurado! A página vai recarregar agora.");
+        window.location.reload();
+      } finally {
+        setRestaurando(null);
+      }
+    }
+
+    return (
+      <TableShell
+        title="Backups automáticos"
+        sub="Uma cópia completa é salva automaticamente uma vez por dia, sempre que alguém abre o sistema."
+      >
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-[11px] tracking-wide text-gray-400 border-b border-gray-100">
+              <th className="px-5 py-2 font-medium">DATA</th>
+              <th className="px-5 py-2 font-medium">PRODUTOS NO ESTOQUE</th>
+              <th className="px-5 py-2 font-medium">AÇÕES</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lista === null && (
+              <tr><td colSpan={3} className="py-8 text-center text-gray-400 text-sm">Carregando...</td></tr>
+            )}
+            {lista?.map((b) => (
+              <tr key={b.id} className="border-b border-gray-50">
+                <td className="px-5 py-3 text-gray-900 font-medium">
+                  {new Date(b.criado_em).toLocaleString("pt-BR")}
+                </td>
+                <td className="px-5 py-3 text-gray-600">{b.qtd_produtos ?? "—"}</td>
+                <td className="px-5 py-3">
+                  <button
+                    onClick={() => restaurar(b.id)}
+                    disabled={restaurando === b.id}
+                    className="text-xs font-medium border border-amber-600 text-amber-700 hover:bg-amber-50 disabled:opacity-40 rounded-md px-3 py-1.5"
+                  >
+                    {restaurando === b.id ? "Restaurando..." : "Restaurar este backup"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {lista?.length === 0 && (
+              <tr><td colSpan={3} className="py-8 text-center text-gray-400 text-sm">Nenhum backup automático ainda. O primeiro é criado na próxima vez que alguém abrir o sistema.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </TableShell>
+    );
+  }
+
   function VendedoresPage() {
     return (
       <TableShell
@@ -3929,6 +4047,7 @@ export default function ColorShopDashboard() {
     fornecedores: <PessoasPage title="Fornecedores" data={fornecedores} setData={setFornecedores} placeholder="Nenhum fornecedor cadastrado." />,
     cambio: <CambioPage />,
     vendedores: <VendedoresPage />,
+    backups: <BackupsPage />,
   };
 
   if (loadError) {
