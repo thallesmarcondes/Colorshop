@@ -30,8 +30,9 @@ function parseListaFornecedor(texto) {
   const linhas = (texto || "").split("\n");
   const resultado = [];
   let marcaAtual = "";
-  // pega o último número da linha, com moeda opcional logo depois (rs, r$, us$, usd, $)
-  const regexPreco = /([\d]+(?:[.,]\d+)?)\s*(rs|r\$|reais|us\$|usd|\$)?\s*$/i;
+  // pega o preço no final da linha — moeda pode vir ANTES do número (US$ 75) ou DEPOIS (75 rs / 75$),
+  // e tolera vírgula/ponto sobrando no final (ex: "42,")
+  const regexPreco = /(?:(rs|r\$|reais|us\$|usd|\$)\s*)?([\d]+(?:[.,]\d+)?)\s*(rs|r\$|reais|us\$|usd|\$)?\s*[.,]?\s*$/i;
 
   for (const linhaRaw of linhas) {
     const linha = linhaRaw.trim();
@@ -40,20 +41,20 @@ function parseListaFornecedor(texto) {
     const match = linha.match(regexPreco);
     if (!match) {
       // sem preço no final -> linha de cabeçalho/categoria, vira a "marca" das próximas linhas
-      const limpo = linha.replace(/[*🔥💊💪🏻💎—]+/g, "").replace(/-+$/, "").trim();
+      const limpo = linha.replace(/[*🔥💊💪🏻💎—💉🧬🖊️]+/g, "").replace(/-+$/, "").trim();
       if (limpo) marcaAtual = limpo;
       continue;
     }
 
-    const precoStr = match[1].replace(",", ".");
+    const precoStr = match[2].replace(",", ".");
     const preco = parseFloat(precoStr);
     if (!preco || preco <= 0) continue;
 
-    const moedaTxt = (match[2] || "").toLowerCase();
+    const moedaTxt = ((match[1] || "") + (match[3] || "")).toLowerCase();
     const moeda = moedaTxt.includes("rs") || moedaTxt.includes("r$") || moedaTxt.includes("reais") ? "BRL" : "USD";
 
     let nome = linha.slice(0, match.index).trim();
-    nome = nome.replace(/[-:=]+\s*$/, "").trim();
+    nome = nome.replace(/[-:=—]+\s*$/, "").trim();
     if (!nome) continue;
 
     resultado.push({ key: uid(), nome, marca: marcaAtual, precoOriginal: preco, moeda });
@@ -2968,7 +2969,7 @@ export default function ColorShopDashboard() {
 
     // ---- modo manual (linha por linha) ----
     const [linhas, setLinhas] = useState([
-      { key: uid(), nome: "", marca: "", custo: 0, tipoMargem: "percentual", valorMargem: 30 },
+      { key: uid(), nome: "", marca: "", tipo: "", custo: 0, tipoMargem: "percentual", valorMargem: 30 },
     ]);
     function calcularPreco(linha) {
       const custo = Number(linha.custo) || 0;
@@ -2980,7 +2981,7 @@ export default function ColorShopDashboard() {
       setLinhas((ls) => ls.map((l) => (l.key === key ? { ...l, [campo]: valor } : l)));
     }
     function adicionarLinha() {
-      setLinhas((ls) => [...ls, { key: uid(), nome: "", marca: "", custo: 0, tipoMargem: "percentual", valorMargem: 30 }]);
+      setLinhas((ls) => [...ls, { key: uid(), nome: "", marca: "", tipo: "", custo: 0, tipoMargem: "percentual", valorMargem: 30 }]);
     }
     function removerLinha(key) {
       setLinhas((ls) => (ls.length > 1 ? ls.filter((l) => l.key !== key) : ls));
@@ -2992,8 +2993,10 @@ export default function ColorShopDashboard() {
     const [forcarBRL, setForcarBRL] = useState(false);
     const [margemGlobalTipo, setMargemGlobalTipo] = useState("percentual");
     const [margemGlobalValor, setMargemGlobalValor] = useState(30);
+    const [tipoGlobal, setTipoGlobal] = useState("");
     const [preview, setPreview] = useState(null); // array de linhas analisadas, ou null antes de analisar
 
+    const tiposExistentes = useMemo(() => Array.from(new Set(estoque.map((i) => i.tipo).filter(Boolean))).sort(), [estoque]);
     const nomesExistentes = useMemo(
       () => new Set(estoque.map((i) => i.nome.trim().toLowerCase())),
       [estoque]
@@ -3015,6 +3018,7 @@ export default function ColorShopDashboard() {
         const margemValor = margemGlobalValor;
         return {
           ...p,
+          tipo: tipoGlobal,
           moeda: moedaFinal,
           custoUSD,
           jaExiste,
@@ -3051,6 +3055,9 @@ export default function ColorShopDashboard() {
         }))
       );
     }
+    function aplicarTipoATodos() {
+      setPreview((ps) => ps.map((p) => ({ ...p, tipo: tipoGlobal })));
+    }
 
     const fornecedorNome = fornecedores.find((f) => f.id === fornecedorId)?.nome || "";
     const previewIncluidos = preview ? preview.filter((p) => p.incluir) : [];
@@ -3062,7 +3069,7 @@ export default function ColorShopDashboard() {
       const novosItens = linhasValidas.map((l) => {
         const preco = Number(calcularPreco(l).toFixed(2));
         return {
-          id: uid(), nome: l.nome.trim(), marca: l.marca.trim(), tipo: "", qtd: 0,
+          id: uid(), nome: l.nome.trim(), marca: l.marca.trim(), tipo: l.tipo.trim(), qtd: 0,
           custo: Number(l.custo), custoVendedor: Number(l.custo), varejo: preco, atacado: preco,
           min: 0, sobEncomenda: true, fornecedorNome, foto: null,
         };
@@ -3077,7 +3084,7 @@ export default function ColorShopDashboard() {
         const preco = Number(p.precoVenda);
         const custoUSD = Number(p.custoUSD.toFixed(2));
         return {
-          id: uid(), nome: p.nome, marca: p.marca, tipo: "", qtd: 0,
+          id: uid(), nome: p.nome, marca: p.marca, tipo: p.tipo || "", qtd: 0,
           custo: custoUSD, custoVendedor: custoUSD, varejo: preco, atacado: preco,
           min: 0, sobEncomenda: true, fornecedorNome, foto: null,
         };
@@ -3162,7 +3169,7 @@ export default function ColorShopDashboard() {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 mb-3 border border-gray-200 rounded-lg p-3 bg-gray-50 items-end">
+                <div className="grid grid-cols-3 gap-3 mb-3 border border-gray-200 rounded-lg p-3 bg-gray-50 items-end">
                   <div>
                     <div className="text-[11px] text-gray-400 mb-1">Margem de lucro (padrão pra todos)</div>
                     <div className="flex gap-1">
@@ -3179,16 +3186,38 @@ export default function ColorShopDashboard() {
                       />
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={aplicarMargemATodos}
-                    className="text-sm font-medium border border-emerald-800 text-emerald-800 hover:bg-emerald-50 rounded-md py-1.5"
-                  >
-                    Aplicar essa margem a todos os produtos
-                  </button>
+                  <div>
+                    <div className="text-[11px] text-gray-400 mb-1">Tipo (padrão pra todos)</div>
+                    <input
+                      list="lista-tipos-import"
+                      className={inputCls}
+                      value={tipoGlobal}
+                      onChange={(e) => setTipoGlobal(e.target.value)}
+                      placeholder="Ex: Injetável, Cápsula..."
+                    />
+                    <datalist id="lista-tipos-import">
+                      {tiposExistentes.map((t) => <option key={t} value={t} />)}
+                    </datalist>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <button
+                      type="button"
+                      onClick={aplicarMargemATodos}
+                      className="text-xs font-medium border border-emerald-800 text-emerald-800 hover:bg-emerald-50 rounded-md py-1.5"
+                    >
+                      Aplicar margem a todos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={aplicarTipoATodos}
+                      className="text-xs font-medium border border-emerald-800 text-emerald-800 hover:bg-emerald-50 rounded-md py-1.5"
+                    >
+                      Aplicar tipo a todos
+                    </button>
+                  </div>
                 </div>
                 <div className="text-xs text-gray-400 -mt-2 mb-3">
-                  Você também pode ajustar a margem de um produto individual clicando nele na tabela abaixo.
+                  Você também pode ajustar a margem ou o tipo de um produto individual na tabela abaixo.
                 </div>
 
                 <div className="border border-gray-200 rounded-lg max-h-96 overflow-y-auto mb-4">
@@ -3198,6 +3227,7 @@ export default function ColorShopDashboard() {
                         <th className="px-3 py-2 font-medium">✓</th>
                         <th className="px-3 py-2 font-medium">NOME</th>
                         <th className="px-3 py-2 font-medium">MARCA</th>
+                        <th className="px-3 py-2 font-medium">TIPO</th>
                         <th className="px-3 py-2 font-medium">PREÇO ORIGINAL</th>
                         <th className="px-3 py-2 font-medium">CUSTO US$</th>
                         <th className="px-3 py-2 font-medium">VENDA US$</th>
@@ -3227,6 +3257,13 @@ export default function ColorShopDashboard() {
                               className="w-full border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-emerald-700 rounded px-1"
                               value={p.marca}
                               onChange={(e) => atualizarPreview(p.key, "marca", e.target.value)}
+                            />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <input
+                              className="w-full border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-emerald-700 rounded px-1"
+                              value={p.tipo || ""}
+                              onChange={(e) => atualizarPreview(p.key, "tipo", e.target.value)}
                             />
                           </td>
                           <td className="px-3 py-1.5 text-gray-500 whitespace-nowrap">
@@ -3282,7 +3319,7 @@ export default function ColorShopDashboard() {
                         </button>
                       )}
                     </div>
-                    <div className="grid grid-cols-2 gap-2 mb-2">
+                    <div className="grid grid-cols-3 gap-2 mb-2">
                       <input
                         className={inputCls}
                         placeholder="Nome do produto"
@@ -3295,6 +3332,16 @@ export default function ColorShopDashboard() {
                         value={l.marca}
                         onChange={(e) => atualizarLinha(l.key, "marca", e.target.value)}
                       />
+                      <input
+                        list="lista-tipos-import-manual"
+                        className={inputCls}
+                        placeholder="Tipo (opcional)"
+                        value={l.tipo}
+                        onChange={(e) => atualizarLinha(l.key, "tipo", e.target.value)}
+                      />
+                      <datalist id="lista-tipos-import-manual">
+                        {tiposExistentes.map((t) => <option key={t} value={t} />)}
+                      </datalist>
                     </div>
                     <div className="grid grid-cols-3 gap-2 items-end">
                       <div>
